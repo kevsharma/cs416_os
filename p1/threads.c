@@ -1,6 +1,10 @@
 /*
 * Add NetID and names of all project partners
-*
+*   yp315  | Yash Patel
+*   kks107 | Kev Sharma
+*   
+*   CS 416 - Undergraduate OS
+*   Tested on man.cs.rutgers.edu
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,9 +29,10 @@ void *add_counter(void *arg) {
 
     /* Add thread synchronizaiton logic in this function */	
 
-    for(i = 0; i < loop; i++){
-
-	x = x + 1;
+    for(i = 0; i < loop; i++) {
+        pthread_mutex_lock(&mutex);
+	    x = x + 1;
+        pthread_mutex_unlock(&mutex);
     }
 
     return NULL;
@@ -52,10 +57,21 @@ int main(int argc, char *argv[]) {
     printf("Going to run four threads to increment x up to %d\n", 4 * loop);
 
     /* Implement Code Here */
+    pthread_mutex_init(&mutex, NULL); /* Create lock */
 
+    pthread_create(&t1, NULL, &add_counter, NULL);
+    pthread_create(&t2, NULL, &add_counter, NULL);
+    pthread_create(&t3, NULL, &add_counter, NULL);
+    pthread_create(&t4, NULL, &add_counter, NULL);
 
     /* Make sure to join the threads */
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    pthread_join(t3, NULL);
+    pthread_join(t4, NULL);
 
+    /* `x` no longer a shared resource among threads.*/
+    pthread_mutex_destroy(&mutex); 
 
     printf("The final value of x is %d\n", x);
 
