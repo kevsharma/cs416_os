@@ -1,6 +1,10 @@
 /*
 * Add NetID and names of all project partners
-*
+*   yp315  | Yash Patel
+*   kks107 | Kev Sharma
+*   
+*   CS 416 - Undergraduate OS
+*   Tested on man.cs.rutgers.edu
 */
 #include <stdio.h>
 #include <string.h>
@@ -19,7 +23,16 @@ static unsigned int myaddress = 4026544704;   // Binary  would be 11110000000000
 static unsigned int get_top_bits(unsigned int value,  int num_bits)
 {
 	//Implement your code here
-	
+	unsigned long int mask = (1 << num_bits) - 1;
+
+    /* Shift mask left to align with MSB of value */
+    int num_shifts = 0;
+    while ((mask << 1) < value) {
+        mask <<= 1;
+        ++num_shifts;
+    }
+
+    return (mask & value) >> num_shifts;
 }
 
 
@@ -30,7 +43,7 @@ static unsigned int get_top_bits(unsigned int value,  int num_bits)
 static void set_bit_at_index(char *bitmap, int index)
 {
     //Implement your code here	
-
+    bitmap[(index / 8)] |= (1 << (7 - (index % 8)));
     return;
 }
 
@@ -43,7 +56,7 @@ static int get_bit_at_index(char *bitmap, int index)
 {
     //Get to the location in the character bitmap array
     //Implement your code here
-    
+    return bitmap[(index / 8)] &= (1 << (7 - (index % 8)));
 }
 
 
