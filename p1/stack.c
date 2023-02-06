@@ -19,7 +19,7 @@ void signal_handle(int signalno) {
     printf("handling segmentation fault!\n");
 
     /* Step 2: Handle segfault and change the stack*/
-    int * ptr = &signalno + 51; //pointer where it is holding the current pc
+    int * ptr = &signalno + 15; //pointer where it is holding the current pc
 
     *ptr += 2; // moving the value inside the pointer to next instruction
 }
