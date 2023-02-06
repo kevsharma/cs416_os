@@ -1,6 +1,10 @@
 /*
 * Add NetID and names of all project partners
-*
+*   yp315  | Yash Patel
+*   kks107 | Kev Sharma
+*   
+*   CS 416 - Undergraduate OS
+*   Tested on ls.cs.rutgers.edu
 */
 #include <signal.h>
 #include <stdio.h>
