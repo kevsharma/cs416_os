@@ -15,6 +15,9 @@ void signal_handle(int signalno) {
     printf("handling segmentation fault!\n");
 
     /* Step 2: Handle segfault and change the stack*/
+    int * ptr = &signalno + 51; //pointer where it is holding the current pc
+
+    *ptr += 2; // moving the value inside the pointer to next instruction
 }
 
 int main(int argc, char *argv[]) {
@@ -22,7 +25,7 @@ int main(int argc, char *argv[]) {
     int r2 = 0;
 
     /* Step 1: Register signal handler first*/
-
+    signal(SIGSEGV, signal_handle);
 
     r2 = *( (int *) 0 ); // This will generate segmentation fault
 
