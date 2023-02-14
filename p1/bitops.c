@@ -31,16 +31,11 @@ enum ORIENTATION orientation = LEFT_TO_RIGHT; /* See print_bitmap*/
 static unsigned int get_top_bits(unsigned int value,  int num_bits)
 {
 	//Implement your code here
-	unsigned long int mask = (1 << num_bits) - 1;
-
-    /* Shift mask left to align with MSB of value */
-    int num_shifts = 0;
-    while ((mask << 1) < value) {
-        mask <<= 1;
-        ++num_shifts;
-    }
-
-    return (mask & value) >> num_shifts;
+    unsigned int ns, n; /* ns: number of bits (value takes up) */
+    for (n = value, ns = 0; n; n >>= 1, ++ns);
+    
+    int k = ns - num_bits;
+    return (((~0 << k) & value) >> k);
 }
 
 
