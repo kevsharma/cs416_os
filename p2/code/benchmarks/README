@@ -1,0 +1,43 @@
+How to run the benchmark?
+-------------------------
+
+1. First, do a make clean and make
+	$ make clean
+	$ make
+
+2. Before running the benchmark, run 
+
+	$ ./genRecord.sh
+
+The genRecord generates data for external_cal.
+
+3. Running benchmarks
+
+	$ ./external_cal 6 
+
+Here 6 refers to the number of user-level threads to run. Similarly,
+
+	$ ./parallelCal 6
+	$ ./vector_multiply 6
+
+Make sure to test your code with different user-level thread-worker thread count and measure performance. 
+We will test your code for large number (50-100) of user-level threads.
+
+Checking correctness
+-----------------------
+
+You can check the correctness of code in the following ways.
+
+1.) For each benchmark, you would see the calculated sum and the verified sum to be the same.
+
+Sample output:
+
+        running time: 1373 micro-seconds
+        sum is: 83842816
+        verified sum is: 83842816
+
+
+2.) Disable "USE_WORKERS" in thread-worker.h and compile the library again before compiling the benchmark. 
+The code will use "pthread" library by default.
+
+//#define USE_WORKERS 1
