@@ -6,6 +6,8 @@
 
 #include "thread-worker.h"
 
+#define STACK_SIZE 30000
+
 //Global counter for total context switches and 
 //average turn around and response time
 long tot_cntx_switches=0;
@@ -14,7 +16,7 @@ double avg_resp_time=0;
 
 
 // INITAILIZE ALL YOUR OTHER VARIABLES HERE
-// YOUR CODE HERE
+uint id_value = 0;
 
 
 /* create a new thread */
@@ -27,7 +29,15 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
        // after everything is set, push this thread into run queue and 
        // - make it ready for the execution.
 
-       // YOUR CODE HERE
+       tcb *t_tcb = malloc(sizeof(tcb));
+	   t_tcb->tid = ++id_value; //adds 1 to the value then assigns it to tid
+	   t_tcb->t_status = Ready; 
+	   t_tcb->stack = malloc(STACK_SIZE);
+	   
+	   t_tcb->t_context.uc_link=NULL;
+	   t_tcb->t_context.uc_stack.ss_sp=t_tcb->stack;
+	   t_tcb->t_context.uc_stack.ss_size=STACK_SIZE;
+	   t_tcb->t_context.uc_stack.ss_flags=0;
 	
     return 0;
 };
