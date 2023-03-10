@@ -18,20 +18,19 @@
 #include <sys/types.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <ucontext.h>
 
 typedef uint worker_t;
 
-enum thread_status {Ready,Running,Blocked}; //Do not know if we need blocked
-
 typedef struct TCB {
 	/* add important states in a thread control block */
-	worker_t tid; //thread ID
-	enum thread_status t_status; // thread status
-	ucontext_t t_context; // thread context
-	void* stack; // thread stack
-	uint priority; // thread priority <- CHECK THIS
+	// thread Id
+	// thread status
+	// thread context
+	// thread stack
+	// thread priority
 	// And more ...
+
+	// YOUR CODE HERE
 } tcb; 
 
 /* mutex struct definition */
