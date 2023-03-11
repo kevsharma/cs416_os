@@ -38,7 +38,9 @@
     function schedule() {
       while(1):
         if arrival union scheduled is null: // main also done
-           exit program swapfile
+          free the queues
+          scheduler = NULL;
+          setcontext(cleanup);
 
         // include appropriate state changes here
         enqueue(scheduled, running);
@@ -47,7 +49,9 @@
     }
 
     function performcleanup():
-      while(1):
+     // scheduler still alive. exit program after scheduler ends.
+      while(!scheduler):
+        // a different thread ended. //
         uint8 tid_ended = tcb->tid
         free heap of running tcb, free tcb
         join search: if any worker waiting for this to complete (via join) - then set that state to ready
