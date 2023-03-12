@@ -84,10 +84,28 @@ tcb* dequeue(Queue *q_ptr) {
 }
 
 
+void print_queue(Queue* q_ptr) {
+	if (isUninitialized(q_ptr)) {
+		printf("INFO[print_queue]: q_ptr unintialized\n");
+		return;
+	}
+	
+	if (isEmpty(q_ptr)) {
+		printf("INFO[print_queue]: queue is empty\n");
+		return;
+	}
+
+    Node* iterator = q_ptr->rear->next; // start at front;
+    for(; iterator != q_ptr->rear; iterator = iterator->next)
+        printf("%d, ", iterator->data->thread_id);
+    printf("%d\n", iterator->data->thread_id);
+}
+
+
 // INITAILIZE ALL YOUR OTHER VARIABLES HERE
 ////////////////////////////////////////////////////////////////////////////////////////////
-static Queue *arrival;
-static Queue *scheduled;
+static Queue *q_arrival;
+static Queue *q_scheduled;
 
 static ucontext_t *scheduler; // In a repeat loop in schedule();
 static ucontext_t *cleanup; // Cleans up after a worker thread ends. Workers' uc_link points to this;
@@ -96,163 +114,188 @@ static tcb *running; // Currently executing thread; CANNOT BE SCHEDULER, CLEANUP
 ////////////////////////////////////////////////////////////////////////////////////////////
 
 void init_queues() {
-	assert(isUninitialized(arrival));
-	assert(isUninitialized(scheduled));
+	assert(isUninitialized(q_arrival));
+	assert(isUninitialized(q_scheduled));
 
-	arrival = malloc(sizeof(Queue));
-	arrival->size = 0;
-	arrival->rear = NULL;
+	q_arrival = malloc(sizeof(Queue));
+	q_arrival->size = 0;
+	q_arrival->rear = NULL;
 
-	scheduled = malloc(sizeof(Queue));
-	scheduled->size = 0;
-	scheduled->rear = NULL;
+	q_scheduled = malloc(sizeof(Queue));
+	q_scheduled->size = 0;
+	q_scheduled->rear = NULL;
 }
 
 void deinit_queues() {
-	assert(isEmpty(arrival) && isEmpty(scheduled));
-	free(arrival);
-	free(scheduled);
-	arrival = NULL;
-	scheduled = NULL;
+	assert(isEmpty(q_arrival) && isEmpty(q_scheduled));
+	free(q_arrival);
+	free(q_scheduled);
+	q_arrival = NULL;
+	q_scheduled = NULL;
 }
 
 void schedule() {
-	// If either queue contains a job, scheduler not done. 
+	printf("INFO[schedule 1]: Entered Scheduler for the first time\n");
+	// If either queue contains a job, scheduler not done.q_arrival 
 	// Further, if running not cleaned up - it was preempted.
-	while(!isEmpty(arrival) || !isEmpty(scheduled) || (running != NULL)) {
+	while(!isEmpty(q_arrival) || !isEmpty(q_scheduled) || (running != NULL)) {
+		printf("INFO[schedule 2]: entered scheduler loop. Scheduled Queue: ");
+		print_queue(q_scheduled);
 		// Insert newly arrived jobs into schedule queue.
-		if (!isEmpty(arrival)) {
-			enqueue(scheduled, dequeue(arrival));
+		if (!isEmpty(q_arrival)) {
+			tcb *newly_arrived_job = dequeue(q_arrival);
+			enqueue(q_scheduled, newly_arrived_job);
+			printf("INFO[schedule 3]: put tid (%d) into scheduled queue.\n", newly_arrived_job->thread_id);
 			continue;
 		}
 
+		printf("INFO[schedule 3.5]: About to perform running check.\n");
 		// Both queues empty, but exists one remaining job - running.
 		if(running != NULL) {
-			enqueue(scheduled, running);
+			printf("INFO[schedule 4]: Enqueued Running tid (%d)\n", running->thread_id);
+			enqueue(q_scheduled, running);
 		}
+		printf("INFO[schedule 4.5]: Running is NULL.\n");
 
-		running = dequeue(scheduled);
+		running = dequeue(q_scheduled);
+		printf("DEBUG[schedule 5]: dequeued %d\n", running->thread_id);
+		printf("DEBUG[schedule 6]: dequeued uctx: %d\n", running->uctx);
+
 		swapcontext(scheduler, running->uctx);
 	}
 
+	printf("INFO[schedule -1]: Exited scheduler loop");
 	// Supporting Mechanisms
 	deinit_queues();
 	// Context flows to cleanup.
 }
 
-int scheduler_incomplete() {
-	return !isUninitialized(arrival) && !isUninitialized(scheduled);
-}
-
 void perform_cleanup() {
 	// If while condition is true, then scheduler job has not completed.
-	while(scheduler_incomplete()) {
-		//worker_t tid_ended = running->thread_id;
+	printf("INFO[cleanup context]: entered perform_clean()\n");
+	while(!isUninitialized(q_arrival) && !isUninitialized(q_scheduled)) {
+		worker_t tid_ended = running->thread_id;
+		printf("INFO[CLEANUP]: Cleaned running tid (%d)\n", tid_ended);
 		// JOIN search: filter queue to update any worker waiting on tid_ended
-
 		// Allocated Heap space for TCB and TCB->uctx and TCB->uctx->uc_stack base ptr
-		free(running->uctx->uc_stack.ss_sp); // Free the worker's stack
+
+		if (tid_ended != 0) {
+			/* main context's stack was not allocated. */
+			free(running->uctx->uc_stack.ss_sp); // Free the worker's stack
+		}
 		free(running->uctx);
 		free(running);
 		running = NULL; // IMPORTANT FLAG (see scheduler while guard)
 		swapcontext(cleanup, scheduler);
 	}
 
+	printf("INFO[cleanup context]: frees initiated of scheduler and cleanup contexts\n");
 	// Scheduler done too.
 	free(scheduler->uc_stack.ss_sp);
 	free(scheduler);
+	free(cleanup->uc_stack.ss_sp);
 	free(cleanup);
-
-	scheduler = NULL;	
-	cleanup = NULL;
 }
 
-/* Called only first time */
-void initialize_library() {
-	// Initialize Supporting Mechanisms
-	init_queues();
+int worker_create(worker_t * thread, pthread_attr_t * attr, void
+    *(*function)(void*), void * arg)
+{
+	if (!scheduler) {
+		// First time library called.
+		init_queues();
+		printf("INFO[worker_create]: printing arrival: \t\t");
+		print_queue(q_arrival);
+		printf("INFO[worker_create]: printing scheduled: \t");
+		print_queue(q_scheduled);
 
-	// Running TCB is also empty: Give it the value of main.
-	running = (tcb *) malloc(sizeof(tcb)); // we need to set the uclink to cleanup.
-	running->thread_id = 0; // main thread which started the process, we don't know stack. 
-	running->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
-	getcontext(running->uctx);
+		// Scheduler and Cleanup should be contacted from anywhere
+		scheduler = (ucontext_t *) malloc(sizeof(ucontext_t));
+		cleanup = (ucontext_t *) malloc(sizeof(ucontext_t));
 
-	// Enqueue main to arrival
-	enqueue(arrival, running);
+		// Create Scheduler
+		getcontext(scheduler);
+		scheduler->uc_link = cleanup;
+		scheduler->uc_stack.ss_size = 4096;
+		scheduler->uc_stack.ss_sp = malloc(4096);
+		makecontext(scheduler, schedule, 0);
 
-	// Scheduler and Cleanup should be contacted from anywhere
-	scheduler = (ucontext_t *) malloc(sizeof(ucontext_t));
-	cleanup = (ucontext_t *) malloc(sizeof(ucontext_t));
+		// Create cleanup
+		getcontext(cleanup);
+		cleanup->uc_link = NULL;
+		cleanup->uc_stack.ss_size = 4096;
+		cleanup->uc_stack.ss_sp = malloc(4096);
+		makecontext(cleanup, perform_cleanup, 0);
+		
+		// Create tcb for main
+		running = (tcb *) malloc(sizeof(tcb));
+		running->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
+		running->thread_id = 0; // main first program
+		getcontext(running->uctx);
+		running->uctx->uc_link = cleanup;
+	}
 
-	// Create Scheduler
-	getcontext(scheduler);
-	scheduler->uc_link = cleanup;
-	scheduler->uc_stack.ss_size = 4096;
-	scheduler->uc_stack.ss_sp = malloc(4096);
-	makecontext(scheduler, schedule, 0);
-
-	// Create cleanup
-	getcontext(cleanup);
-	char cleanup_stack[16384];
-	cleanup->uc_link = NULL;
-	cleanup->uc_stack.ss_size = 16384;
-	cleanup->uc_stack.ss_sp = cleanup_stack; // lightweight, no need for heap.
-	makecontext(cleanup, perform_cleanup, 0);
-}
-
-tcb* new_worker_tcb(worker_t * thread, void *(*function)(void*), void * arg) {
-	// Create the TCB
+	printf("INFO[worker_create]: created TCB for new worker\n");
+	// Create tcb for new_worker and put into q_arrival queue
 	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
+	new_tcb->thread_id = *thread; // thread id stored in tcb
+	
 	new_tcb->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
-
-	// initialize struct item
-	new_tcb->thread_id = *thread;
-
-	// initialize struct item
-	getcontext(new_tcb->uctx);
-	new_tcb->uctx->uc_link = cleanup;
+	getcontext(new_tcb->uctx); // heap space stores context
+	new_tcb->uctx->uc_link = cleanup; // all workers must flow into cleanup
 	new_tcb->uctx->uc_stack.ss_size = 4096;
 	new_tcb->uctx->uc_stack.ss_sp = malloc(4096);
-	// I assume that (void *) means only one of any type of argument
-	makecontext(new_tcb->uctx, function(arg), 0); // TO-DO: verify correctness...
+	makecontext(new_tcb->uctx, (void *) &function, 1, arg); // TO-DO: verify correctness...
 
-	return new_tcb;
-}
-
-/* create a new thread */
-int worker_create(worker_t * thread, pthread_attr_t * attr, void *(*function)(void*), void * arg) {
-	if (!scheduler) {
-		initialize_library();
-	}
+	enqueue(q_arrival, new_tcb);
 	
-	tcb* new_worker = new_worker_tcb(thread, function, arg);
-	enqueue(arrival, new_worker);
-
-	return swapcontext(running->uctx, scheduler);
+	printf("INFO[worker_create]: enqueued new worker into Q_arrival\n");
+	printf("INFO[worker_create]: printing arrival: \t\t");
+	print_queue(q_arrival);
+	return 0;
 };
 
 ///////////////////////////////////////////
 
-void func_bar(void *) {
+void* func_bar(void *) {
 	printf("WORKER: func_bar started\n");
-	int i = 0;
-	while(1) {
-		++i;
-
-		if (i >= (1<16))
-			break;
-	}
 	printf("WORKER: func_bar ended\n");
+	return NULL;
+}
+
+int fmain(int argc, char **argv) {
+	printf("MAIN: Starting main: no queues running yet\n");
+
+	//worker_create(&tid_bar, NULL, (void *) &func_bar, NULL); EXPERIMENT
+	// experiment
+	ucontext_t main;
+	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
+	new_tcb->thread_id = 2; // thread id stored in tcb
+	
+	new_tcb->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
+	getcontext(new_tcb->uctx); // heap space stores context
+	new_tcb->uctx->uc_link = NULL; // all workers must flow into cleanup
+	new_tcb->uctx->uc_stack.ss_size = 4096;
+	new_tcb->uctx->uc_stack.ss_sp = malloc(4096);
+	makecontext(new_tcb->uctx, (void *) &func_bar, 1, NULL); // TO-DO: verify correctness...
+	
+	swapcontext(&main, new_tcb->uctx);
+
+	// experiment;
+
+	printf("MAIN: Ending main\n");
+	// EXPERIMENT setcontext(cleanup);
 }
 
 int main(int argc, char **argv) {
-	printf("MAIN: Calling from Main: no queues running yet\n");
+	printf("MAIN: Starting main: no queues running yet\n");
 
 	worker_t tid_bar = 77;
-	worker_create(&tid_bar, NULL, (void *) func_bar, NULL);
+	worker_create(&tid_bar, NULL, (void *) &func_bar, NULL);
 
-	printf("MAIN: Calling from main, func_bar must have ended\n");
+	printf("MAIN: Ending main\n");
+	setcontext(cleanup);
 }
 
+
 // gcc -o thread-worker thread-worker.c -Wall -fsanitize=address -fno-omit-frame-pointer
+// after first invocation, we must fluidly handle cleanup
