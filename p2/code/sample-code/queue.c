@@ -1,8 +1,19 @@
+#include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 
+/* This queue.c is a preliminary FIFO queue.
+ * TCB allocation in enqueue, and free-ing in dequeue relieves burden from consumer.
+ * See also: map function for future use in implementing JOIN.
+*/
+
+typedef struct TCB { // kept as simple as possible, pointer to it so doesn't matter.
+	unsigned int thread_id;
+} tcb; 
+
 typedef struct Node {
-    int data;
+    tcb *data;
     struct Node *next;
 } Node;
 
@@ -12,24 +23,32 @@ typedef struct Queue {
     struct Node *rear;
 } Queue;
 
-void queue_init(Queue* q_ptr) {
+Queue queue;
+
+int isEmpty(Queue *q_ptr) { 
+    return q_ptr->size == 0;
+}
+
+void queue_init(Queue *q_ptr) {
+	q_ptr = (Queue *) malloc(sizeof(Queue));
     q_ptr->size = 0;
     q_ptr->rear = NULL;
+    printf("queue initialized \n");
 }
 
-int isUninitialized(Queue *q_ptr) {
-    return !q_ptr;
-}
-
-int isEmpty(Queue *q_ptr) {
-    return !q_ptr->size;
+void queue_deinit(Queue *q_ptr) {
+	assert(isEmpty(q_ptr));
+	free(q_ptr);
+	q_ptr = NULL;
 }
 
 /* O(1) Enqueue Operation */
-void enqueue(Queue* q_ptr, Node *item) {
-    if (isUninitialized(q_ptr)) {
-        queue_init(q_ptr);
-    }
+void enqueue(Queue* q_ptr, tcb *data) {
+    //assert(!isUninitialized(q_ptr));
+
+	Node *item = (Node *) malloc(sizeof(Node));
+	item->data = data;
+	item->next = NULL;
 
     if (isEmpty(q_ptr)) {
         // Note that rear is null.
@@ -41,66 +60,76 @@ void enqueue(Queue* q_ptr, Node *item) {
         q_ptr->rear->next = item;
         q_ptr->rear = item;
     }
+    
     ++(q_ptr->size);
 }
 
-
 /* Retrieves and removes the head of this queue, or returns null if this queue is empty. */
-Node* dequeue(Queue *q_ptr) {
-    if (isUninitialized(q_ptr) || isEmpty(q_ptr)) {
-        return NULL;
-    }
+tcb* dequeue(Queue *q_ptr) {
+    //assert(!isUninitialized(q_ptr));
+    assert(!isEmpty(q_ptr));
 
     Node* front;
 
     if (q_ptr->size == 1) {
         front = q_ptr->rear; // rear is front.
         front->next = NULL; // rear pointed to itself.
-
-        q_ptr->size = 0;
         q_ptr->rear = NULL;
-        
-        return front;
-    }
+    } else {
+		// if size == 2, dequeue results in rear pointing to itself.
+		front = q_ptr->rear->next;
+		q_ptr->rear->next = front->next;
+	}
+	
+	--(q_ptr->size);
 
-    // If the queue has 2 elements, dequeue results in rear pointing to itself.
-    front = q_ptr->rear->next;
-    q_ptr->rear->next = front->next;
-    --(q_ptr->size);
-    return front;
+    // Extract data and free queue abstraction (node).
+	tcb *result = front->data;
+	free(front);
+	
+	return result;
 }
 
 
 void print_queue(Queue* q_ptr) {
-    if (isUninitialized(q_ptr) || isEmpty(q_ptr)) {
-        printf("Empty Queue \n.");
-    }
+    //assert(!isUninitialized(q_ptr));
+    assert(!isEmpty(q_ptr));
 
     Node* iterator = q_ptr->rear->next; // start at front;
     for(; iterator != q_ptr->rear; iterator = iterator->next)
-        printf("%d, ", iterator->data);
-    printf("%d\n", iterator->data);
+        printf("%d, ", iterator->data->thread_id);
+    printf("%d\n", iterator->data->thread_id);
 }
 
 
-static Queue queue;
-int main() {
+void test0() {
     queue_init(&queue);
+    queue_deinit(&queue);
+}
+
+void finaltest() {
+    /*
+    queue_init(queue);
 
     int i;
     for (i = 0; i < 10; ++i) {
-        Node* item = (Node *) malloc(sizeof(Node));
-        item->data = i;
-        enqueue(&queue, item);
+        tcb* item = (tcb *) malloc(sizeof(tcb));
+        item->thread_id = i;
+        enqueue(queue, item);
     }
 
-    print_queue(&queue);
+    print_queue(queue);
 
-    while (!isEmpty(&queue)) {
-        Node* dequeued_item = dequeue(&queue);
-        printf("Freed Node with Data: %d\n", dequeued_item->data);
+    while (!isEmpty(queue)) {
+        tcb* dequeued_item = dequeue(queue);
+        printf("Freed Node with Data: %d\n", dequeued_item->thread_id);
         free(dequeued_item);
     }
 
-    return EXIT_SUCCESS;
+    queue_deinit(queue);
+    */
+}
+
+int main() {
+    test0();
 }

@@ -16,17 +16,19 @@
       enqueue(arrival, running) // main
       
       initialize scheduler context off of main 
+      initialize clean context off of main
 
         
     function worker_create_tcb (params) -> tcb * :
       tcb* = malloc()
       ucontext etc
       tcb->ucontext = etc...
+      new_worker->uc_link = cleanup context;
       returns tcb pointer
 
     function worker_create:
-      tcb* new_worker = worker_create_tcb
-      new_worker->uc_link = cleanup context;
+      tcb* new_worker = worker_create_tcb(...)
+      
       if (scheduler == NULL) {
         // implies running is null as well
         initialize_library()
@@ -57,3 +59,6 @@
         join search: if any worker waiting for this to complete (via join) - then set that state to ready
         swap  context to scheduler // note that scheduler cleans up after itself
 */
+
+// Improvement: enqueue deqeue, take the tcb* instead of Node* and handle malloc/free.
+
