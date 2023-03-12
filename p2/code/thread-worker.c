@@ -255,4 +255,4 @@ int main(int argc, char **argv) {
 	printf("MAIN: Calling from main, func_bar must have ended\n");
 }
 
-gcc -o thread-worker thread-worker.c -Wall -fsanitize=address -fno-omit-frame-pointer
+// gcc -o thread-worker thread-worker.c -Wall -fsanitize=address -fno-omit-frame-pointer
