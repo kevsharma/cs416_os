@@ -189,7 +189,7 @@ void perform_cleanup() {
 		swapcontext(cleanup, scheduler);
 	}
 
-	printf("INFO[cleanup context]: frees initiated of scheduler and cleanup contexts\n");
+	printf("\nINFO[cleanup context]: frees initiated of scheduler and cleanup contexts\n");
 	// Scheduler done too.
 	free(scheduler->uc_stack.ss_sp);
 	free(scheduler);
@@ -244,7 +244,7 @@ int worker_create(worker_t * thread, pthread_attr_t * attr, void
 	new_tcb->uctx->uc_link = cleanup; // all workers must flow into cleanup
 	new_tcb->uctx->uc_stack.ss_size = 4096;
 	new_tcb->uctx->uc_stack.ss_sp = malloc(4096);
-	makecontext(new_tcb->uctx, (void *) &function, 1, arg); // TO-DO: verify correctness...
+	makecontext(new_tcb->uctx, (void *) function, 1, arg); // TO-DO: verify correctness...
 
 	enqueue(q_arrival, new_tcb);
 	
@@ -257,40 +257,24 @@ int worker_create(worker_t * thread, pthread_attr_t * attr, void
 ///////////////////////////////////////////
 
 void* func_bar(void *) {
-	printf("WORKER: func_bar started\n");
-	printf("WORKER: func_bar ended\n");
+	printf("WORKER %d: func_bar started\n", running->thread_id);
+	printf("WORKER %d: func_bar ended\n", running->thread_id);
 	return NULL;
-}
-
-int fmain(int argc, char **argv) {
-	printf("MAIN: Starting main: no queues running yet\n");
-
-	//worker_create(&tid_bar, NULL, (void *) &func_bar, NULL); EXPERIMENT
-	// experiment
-	ucontext_t main;
-	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
-	new_tcb->thread_id = 2; // thread id stored in tcb
-	
-	new_tcb->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
-	getcontext(new_tcb->uctx); // heap space stores context
-	new_tcb->uctx->uc_link = NULL; // all workers must flow into cleanup
-	new_tcb->uctx->uc_stack.ss_size = 4096;
-	new_tcb->uctx->uc_stack.ss_sp = malloc(4096);
-	makecontext(new_tcb->uctx, (void *) &func_bar, 1, NULL); // TO-DO: verify correctness...
-	
-	swapcontext(&main, new_tcb->uctx);
-
-	// experiment;
-
-	printf("MAIN: Ending main\n");
-	// EXPERIMENT setcontext(cleanup);
 }
 
 int main(int argc, char **argv) {
 	printf("MAIN: Starting main: no queues running yet\n");
 
-	worker_t tid_bar = 77;
-	worker_create(&tid_bar, NULL, (void *) &func_bar, NULL);
+	worker_t worker_1 = 17;
+	worker_create(&worker_1, NULL, (void *) &func_bar, NULL);
+
+	/*
+	worker_t worker_2 = 38;
+	worker_create(&worker_2, NULL, (void *) &func_bar, NULL);
+
+	worker_t worker_3 = 77;
+	worker_create(&worker_3, NULL, (void *) &func_bar, NULL);
+	*/
 
 	printf("MAIN: Ending main\n");
 	setcontext(cleanup);
@@ -298,4 +282,3 @@ int main(int argc, char **argv) {
 
 
 // gcc -o thread-worker thread-worker.c -Wall -fsanitize=address -fno-omit-frame-pointer
-// after first invocation, we must fluidly handle cleanup
