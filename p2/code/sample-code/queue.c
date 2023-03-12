@@ -23,28 +23,33 @@ typedef struct Queue {
     struct Node *rear;
 } Queue;
 
-Queue queue;
+
+Queue *queue;
+
+int isUninitialized(Queue *q_ptr) {
+    return !q_ptr;
+}
 
 int isEmpty(Queue *q_ptr) { 
+    assert(!isUninitialized(q_ptr));
     return q_ptr->size == 0;
 }
 
-void queue_init(Queue *q_ptr) {
-	q_ptr = (Queue *) malloc(sizeof(Queue));
-    q_ptr->size = 0;
-    q_ptr->rear = NULL;
-    printf("queue initialized \n");
+void queue_init() {
+    queue = (Queue *) malloc(sizeof(Queue));
+    queue->size = 0;
+    queue->rear = NULL;
 }
 
-void queue_deinit(Queue *q_ptr) {
-	assert(isEmpty(q_ptr));
-	free(q_ptr);
-	q_ptr = NULL;
+void queue_deinit() {
+    assert(isEmpty(queue));
+    free(queue);
+    queue = NULL;
 }
 
 /* O(1) Enqueue Operation */
 void enqueue(Queue* q_ptr, tcb *data) {
-    //assert(!isUninitialized(q_ptr));
+    assert(!isUninitialized(q_ptr));
 
 	Node *item = (Node *) malloc(sizeof(Node));
 	item->data = data;
@@ -66,7 +71,7 @@ void enqueue(Queue* q_ptr, tcb *data) {
 
 /* Retrieves and removes the head of this queue, or returns null if this queue is empty. */
 tcb* dequeue(Queue *q_ptr) {
-    //assert(!isUninitialized(q_ptr));
+    assert(!isUninitialized(q_ptr));
     assert(!isEmpty(q_ptr));
 
     Node* front;
@@ -92,7 +97,7 @@ tcb* dequeue(Queue *q_ptr) {
 
 
 void print_queue(Queue* q_ptr) {
-    //assert(!isUninitialized(q_ptr));
+    assert(!isUninitialized(q_ptr));
     assert(!isEmpty(q_ptr));
 
     Node* iterator = q_ptr->rear->next; // start at front;
@@ -102,14 +107,8 @@ void print_queue(Queue* q_ptr) {
 }
 
 
-void test0() {
-    queue_init(&queue);
-    queue_deinit(&queue);
-}
-
 void finaltest() {
-    /*
-    queue_init(queue);
+    queue_init();
 
     int i;
     for (i = 0; i < 10; ++i) {
@@ -126,10 +125,28 @@ void finaltest() {
         free(dequeued_item);
     }
 
-    queue_deinit(queue);
-    */
+    queue_deinit();
 }
 
+void testEnqueue() {
+    queue_init();
+    tcb* item = malloc(sizeof(tcb));
+    item->thread_id = 13;
+
+    enqueue(queue, item);
+    enqueue(queue, item);
+
+    print_queue(queue);
+
+    dequeue(queue);
+    dequeue(queue);
+
+    free(item);
+
+    queue_deinit();
+}
+
+
 int main() {
-    test0();
+    testEnqueue();
 }
