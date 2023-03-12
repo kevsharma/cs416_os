@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <ucontext.h>
 #include <unistd.h>
+#include <assert.h>
 
 typedef unsigned int worker_t;
 
@@ -24,35 +25,23 @@ typedef struct Queue {
     struct Node *rear;
 } Queue;
 
-void queue_init(Queue* q_ptr) {
-	q_ptr = (Queue *) malloc(sizeof(Queue));
-    q_ptr->size = 0;
-    q_ptr->rear = NULL;
-}
-
-void queue_deinit(Queue *q_ptr) {
-	assert(isEmpty(q_ptr));
-	free(q_ptr);
-	q_ptr = NULL;
-}
 
 int isUninitialized(Queue *q_ptr) {
     return !q_ptr;
 }
 
-int isEmpty(Queue *q_ptr) {
-    return !q_ptr->size;
+int isEmpty(Queue *q_ptr) { 
+    assert(!isUninitialized(q_ptr));
+    return q_ptr->size == 0;
 }
 
 /* O(1) Enqueue Operation */
 void enqueue(Queue* q_ptr, tcb *data) {
+    assert(!isUninitialized(q_ptr));
+
 	Node *item = (Node *) malloc(sizeof(Node));
 	item->data = data;
 	item->next = NULL;
-
-    if (isUninitialized(q_ptr)) {
-        queue_init(q_ptr);
-    }
 
     if (isEmpty(q_ptr)) {
         // Note that rear is null.
@@ -64,14 +53,14 @@ void enqueue(Queue* q_ptr, tcb *data) {
         q_ptr->rear->next = item;
         q_ptr->rear = item;
     }
+    
     ++(q_ptr->size);
 }
 
 /* Retrieves and removes the head of this queue, or returns null if this queue is empty. */
 tcb* dequeue(Queue *q_ptr) {
-    if (isUninitialized(q_ptr) || isEmpty(q_ptr)) {
-        return NULL;
-    }
+    assert(!isUninitialized(q_ptr));
+    assert(!isEmpty(q_ptr));
 
     Node* front;
 
@@ -86,6 +75,8 @@ tcb* dequeue(Queue *q_ptr) {
 	}
 	
 	--(q_ptr->size);
+
+    // Extract data and free queue abstraction (node).
 	tcb *result = front->data;
 	free(front);
 	
@@ -104,6 +95,27 @@ static ucontext_t *cleanup; // Cleans up after a worker thread ends. Workers' uc
 static tcb *running; // Currently executing thread; CANNOT BE SCHEDULER, CLEANUP;
 ////////////////////////////////////////////////////////////////////////////////////////////
 
+void init_queues() {
+	assert(isUninitialized(arrival));
+	assert(isUninitialized(scheduled));
+
+	arrival = malloc(sizeof(Queue));
+	arrival->size = 0;
+	arrival->rear = NULL;
+
+	scheduled = malloc(sizeof(Queue));
+	scheduled->size = 0;
+	scheduled->rear = NULL;
+}
+
+void deinit_queues() {
+	assert(isEmpty(arrival) && isEmpty(scheduled));
+	free(arrival);
+	free(scheduled);
+	arrival = NULL;
+	scheduled = NULL;
+}
+
 void schedule() {
 	// If either queue contains a job, scheduler not done. 
 	// Further, if running not cleaned up - it was preempted.
@@ -120,12 +132,11 @@ void schedule() {
 		}
 
 		running = dequeue(scheduled);
-		swapcontext(scheduler, running);
+		swapcontext(scheduler, running->uctx);
 	}
 
 	// Supporting Mechanisms
-	queue_deinit(arrival);
-	queue_deinit(scheduled);
+	deinit_queues();
 	// Context flows to cleanup.
 }
 
@@ -136,11 +147,12 @@ int scheduler_incomplete() {
 void perform_cleanup() {
 	// If while condition is true, then scheduler job has not completed.
 	while(scheduler_incomplete()) {
-		worker_t tid_ended = running->thread_id;
+		//worker_t tid_ended = running->thread_id;
+		// JOIN search: filter queue to update any worker waiting on tid_ended
+
 		free(running->uctx->uc_stack.ss_sp); // Free the worker's stack
 		free(running);
 		running = NULL; // IMPORTANT FLAG (see scheduler while guard)
-		// JOIN search: filter queue to update any worker waiting on tid_ended
 		swapcontext(cleanup, scheduler);
 	}
 
@@ -151,8 +163,8 @@ void perform_cleanup() {
 }
 
 void initialize_library() {
-	queue_init(arrival);
-	queue_init(scheduled);
+	// Initialize Supporting Mechanisms
+	init_queues();
 
 	// Running TCB is also empty: Give it the value of main.
 	running = (tcb *) malloc(sizeof(tcb)); // we need to set the uclink to cleanup.
@@ -181,6 +193,7 @@ void initialize_library() {
 tcb* new_worker_tcb(worker_t * thread, void *(*function)(void*), void * arg) {
 	// Create the TCB
 	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
+	new_tcb->uctx = NULL;
 
 	// initialize struct item
 	new_tcb->thread_id = *thread;
@@ -191,7 +204,7 @@ tcb* new_worker_tcb(worker_t * thread, void *(*function)(void*), void * arg) {
 	new_tcb->uctx->uc_stack.ss_size = 4096;
 	new_tcb->uctx->uc_stack.ss_sp = malloc(4096);
 	// I assume that (void *) means only one of any type of argument
-	makecontext(new_tcb->uctx, function, 1, arg); // TO-DO: verify correctness...
+	makecontext(new_tcb->uctx, function(arg), 0); // TO-DO: verify correctness...
 
 	return new_tcb;
 }
@@ -208,3 +221,8 @@ int worker_create(worker_t * thread, pthread_attr_t * attr, void *(*function)(vo
 	return swapcontext(running->uctx, scheduler);
 };
 
+///////////////////////////////////////////
+
+int main(int argc, char **argv) {
+	printf("woohoo! compiles.");
+}
