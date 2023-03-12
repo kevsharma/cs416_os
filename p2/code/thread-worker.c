@@ -150,7 +150,9 @@ void perform_cleanup() {
 		//worker_t tid_ended = running->thread_id;
 		// JOIN search: filter queue to update any worker waiting on tid_ended
 
+		// Allocated Heap space for TCB and TCB->uctx and TCB->uctx->uc_stack base ptr
 		free(running->uctx->uc_stack.ss_sp); // Free the worker's stack
+		free(running->uctx);
 		free(running);
 		running = NULL; // IMPORTANT FLAG (see scheduler while guard)
 		swapcontext(cleanup, scheduler);
@@ -158,21 +160,30 @@ void perform_cleanup() {
 
 	// Scheduler done too.
 	free(scheduler->uc_stack.ss_sp);
+	free(scheduler);
+	free(cleanup);
+
 	scheduler = NULL;	
 	cleanup = NULL;
 }
 
+/* Called only first time */
 void initialize_library() {
 	// Initialize Supporting Mechanisms
 	init_queues();
 
 	// Running TCB is also empty: Give it the value of main.
 	running = (tcb *) malloc(sizeof(tcb)); // we need to set the uclink to cleanup.
-	running->thread_id = 0; // main thread which started the process, we don't know stack.
+	running->thread_id = 0; // main thread which started the process, we don't know stack. 
+	running->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
 	getcontext(running->uctx);
 
 	// Enqueue main to arrival
 	enqueue(arrival, running);
+
+	// Scheduler and Cleanup should be contacted from anywhere
+	scheduler = (ucontext_t *) malloc(sizeof(ucontext_t));
+	cleanup = (ucontext_t *) malloc(sizeof(ucontext_t));
 
 	// Create Scheduler
 	getcontext(scheduler);
@@ -193,7 +204,7 @@ void initialize_library() {
 tcb* new_worker_tcb(worker_t * thread, void *(*function)(void*), void * arg) {
 	// Create the TCB
 	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
-	new_tcb->uctx = NULL;
+	new_tcb->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
 
 	// initialize struct item
 	new_tcb->thread_id = *thread;
@@ -223,6 +234,25 @@ int worker_create(worker_t * thread, pthread_attr_t * attr, void *(*function)(vo
 
 ///////////////////////////////////////////
 
-int main(int argc, char **argv) {
-	printf("woohoo! compiles.");
+void func_bar(void *) {
+	printf("WORKER: func_bar started\n");
+	int i = 0;
+	while(1) {
+		++i;
+
+		if (i >= (1<16))
+			break;
+	}
+	printf("WORKER: func_bar ended\n");
 }
+
+int main(int argc, char **argv) {
+	printf("MAIN: Calling from Main: no queues running yet\n");
+
+	worker_t tid_bar = 77;
+	worker_create(&tid_bar, NULL, (void *) func_bar, NULL);
+
+	printf("MAIN: Calling from main, func_bar must have ended\n");
+}
+
+gcc -o thread-worker thread-worker.c -Wall -fsanitize=address -fno-omit-frame-pointer
