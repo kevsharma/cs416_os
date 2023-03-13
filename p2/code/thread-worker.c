@@ -282,3 +282,51 @@ int main(int argc, char **argv) {
 
 
 // gcc -o thread-worker thread-worker.c -Wall -fsanitize=address -fno-omit-frame-pointer
+
+/**
+ * maintain list of all TCBs-> this is used to search for waiting by worker_exit.
+ * tcb gets two more attirbutes, join_tid; join_retval;
+ * 
+ * function join(thread_end, retval*) {
+ * 		running->join_tid-> = thead_end;
+ * 		// retval will be populated when the thread_end calls worker_exit(value);
+ * 		swapcontext(running->uctx, scheduler);
+ * 
+ * 		// exit called by join_tid would have stored the retval in tcb struct
+ * 		if retval != NULL:		
+ * 			retval* = running->join_retval;
+ * }
+ * 
+ * function worker_exit(void *value_ptr) {
+ * 		if value_ptr != NULL:
+ * 			// cycle through tcb list to find any waiting on this thread, and change their retval
+ * 			for tcb in tcb list:
+ * 				if tcb->join_tid -> running->thread_id:
+ * 					tcb->join_retval = value_ptr;
+ * 
+ * 		// because of uc_link -> cleanup gets passed control and cleans the list.
+ * }
+ * 
+ * function worker_yield(void *value_ptr) {
+ * 		swapcontext(running->uctx, scheduler);
+ * }
+ *
+ * 
+ * ToDo 
+ * 1. list structure for TCBs (searchable, insert, delete)
+ * 2. tcb modify to add two new attributes: worker_t join_tid (initited to -1), void *join_retval
+ * 
+ * Control Flow Ramificatins:
+ * 3. modify init to malloc space for the new variables
+ * 4. malloc space for new list
+ * 5. cleanup() fixes: 
+ * 		- while (tcb list not empty) condition
+ * 		- free newly malloc space
+ * 		- free tcb list after completion of main
+ * 
+ * 6. worker_yield
+ * 7. worker_exit
+ * 8. worker_join
+ * 
+ * 
+*/
