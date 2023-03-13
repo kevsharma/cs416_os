@@ -25,6 +25,12 @@ typedef struct Queue {
     struct Node *rear;
 } Queue;
 
+/* Singular Linked List */
+typedef struct List {
+    unsigned short size;
+    struct Node *front;
+} List;
+
 
 int isUninitialized(Queue *q_ptr) {
     return !q_ptr;
@@ -83,7 +89,6 @@ tcb* dequeue(Queue *q_ptr) {
 	return result;
 }
 
-
 void print_queue(Queue* q_ptr) {
 	if (isUninitialized(q_ptr)) {
 		printf("INFO[print_queue]: q_ptr unintialized\n");
@@ -101,11 +106,94 @@ void print_queue(Queue* q_ptr) {
     printf("%d\n", iterator->data->thread_id);
 }
 
+int isUninitializedList(List *lst_ptr) {
+    return !lst_ptr;
+}
+
+int isEmptyList(List *lst_ptr) { 
+    assert(!isUninitializedList(lst_ptr));
+    return lst_ptr->size == 0;
+}
+
+/* Inserts to front of list. */
+void insert(List *lst_ptr, tcb *data) {
+    assert(!isUninitializedList(lst_ptr));
+
+    Node *item = (Node *) malloc(sizeof(Node));
+    item->data = data;
+    item->next = lst_ptr->front;
+    ++(lst_ptr->size);
+    lst_ptr->front = item;
+}
+
+/* Returns 1 if the list contains the worker, else returns 0.*/
+int contains(List *lst_ptr, worker_t target) {
+    Node *ptr = lst_ptr->front;
+    while(ptr) {
+        if (ptr->data->thread_id == target) {
+            return 1;
+        }
+        ptr = ptr->next;
+    }
+
+    return 0;
+}
+
+tcb* remove_from(List *lst_ptr, worker_t target) {
+    assert(!isEmptyList(lst_ptr));
+    assert(contains(lst_ptr, target));
+
+    Node *front = lst_ptr->front;
+    tcb *target_tcb;
+
+    if (front->data->thread_id == target) {
+        Node *match = front;
+        target_tcb = match->data;
+        lst_ptr->front = front->next;
+        --(lst_ptr->size);
+
+        free(match);
+        return target_tcb;
+    }
+
+    Node *ptr = front->next;
+    Node *prev = front;
+
+    for (; !ptr; prev = prev->next, ptr = ptr->next) {
+        if (ptr->data->thread_id != target) {
+            continue;
+        }
+
+        prev->next = ptr->next;
+        --(lst_ptr->size);
+
+        target_tcb = ptr->data;
+        free(ptr);
+        break;
+    }
+
+    return target_tcb;
+}
+
+void print_list(List *lst_ptr) {
+    Node *ptr = lst_ptr->front;
+    printf("Printing lst: ");
+    
+    while(ptr) {
+        printf("%d ", ptr->data->thread_id);
+        ptr = ptr->next;
+    }
+
+    printf("\n");
+}
+
+
 
 // INITAILIZE ALL YOUR OTHER VARIABLES HERE
 ////////////////////////////////////////////////////////////////////////////////////////////
 static Queue *q_arrival;
 static Queue *q_scheduled;
+static List *tcbs;
 
 static ucontext_t *scheduler; // In a repeat loop in schedule();
 static ucontext_t *cleanup; // Cleans up after a worker thread ends. Workers' uc_link points to this;
@@ -124,6 +212,13 @@ void init_queues() {
 	q_scheduled = malloc(sizeof(Queue));
 	q_scheduled->size = 0;
 	q_scheduled->rear = NULL;
+}
+
+void init_list() {
+	assert(isUninitializedList(tcbs));
+	tcbs = malloc(sizeof(List));
+	tcbs->size = 0;
+	tcbs->front = NULL;
 }
 
 void deinit_queues() {
@@ -179,7 +274,7 @@ void perform_cleanup() {
 		// JOIN search: filter queue to update any worker waiting on tid_ended
 		// Allocated Heap space for TCB and TCB->uctx and TCB->uctx->uc_stack base ptr
 
-		if (tid_ended != 0) {
+		if (tid_ended != 1) {
 			/* main context's stack was not allocated. */
 			free(running->uctx->uc_stack.ss_sp); // Free the worker's stack
 		}
@@ -229,7 +324,7 @@ int worker_create(worker_t * thread, pthread_attr_t * attr, void
 		// Create tcb for main
 		running = (tcb *) malloc(sizeof(tcb));
 		running->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
-		running->thread_id = 0; // main first program
+		running->thread_id = 1; // main first program
 		getcontext(running->uctx);
 		running->uctx->uc_link = cleanup;
 	}
@@ -254,7 +349,18 @@ int worker_create(worker_t * thread, pthread_attr_t * attr, void
 	return 0;
 };
 
-///////////////////////////////////////////
+/* give CPU pocession to other user level worker threads voluntarily */
+int worker_yield() {
+	return swapcontext(running->uctx, scheduler);
+}
+
+/* terminate a thread */
+void worker_exit(void *value_ptr);
+
+/* wait for thread termination */
+int worker_join(worker_t thread, void **value_ptr);
+
+//////////////////////////////////////////
 
 void* func_bar(void *) {
 	printf("WORKER %d: func_bar started\n", running->thread_id);
@@ -277,7 +383,8 @@ int main(int argc, char **argv) {
 	*/
 
 	printf("MAIN: Ending main\n");
-	setcontext(cleanup);
+	// setcontext(cleanup);
+	// let main naturally flow control to scheduler upon calling join.
 }
 
 
@@ -305,6 +412,7 @@ int main(int argc, char **argv) {
  * 					tcb->join_retval = value_ptr;
  * 
  * 		// because of uc_link -> cleanup gets passed control and cleans the list.
+ * 		// cleanup is also responsible for ensuring that all tids waiting on running tid set to 0
  * }
  * 
  * function worker_yield(void *value_ptr) {
@@ -313,6 +421,9 @@ int main(int argc, char **argv) {
  *
  * 
  * ToDo 
+ * 0. Verify that threads explicityly call exit (examples)
+ * 0. Waitlist is a list of structs. -> Change design to incorporate tcb waiting_list
+ * 
  * 1. list structure for TCBs (searchable, insert, delete)
  * 2. tcb modify to add two new attributes: worker_t join_tid (initited to -1), void *join_retval
  * 
