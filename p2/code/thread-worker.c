@@ -12,6 +12,8 @@ typedef unsigned int worker_t;
 typedef struct TCB {
 	unsigned int 	thread_id;
 	ucontext_t 		*uctx; 
+	worker_t		join_tid;
+	void **			join_retval;
 } tcb; 
 
 typedef struct Node {
@@ -229,6 +231,12 @@ void deinit_queues() {
 	q_scheduled = NULL;
 }
 
+void deinit_list() {
+	assert(tcbs->size <= 1); // Only main running.
+	free(tcbs);
+	tcbs = NULL;
+}
+
 void schedule() {
 	printf("INFO[schedule 1]: Entered Scheduler for the first time\n");
 	// If either queue contains a job, scheduler not done.q_arrival 
@@ -262,18 +270,41 @@ void schedule() {
 	printf("INFO[schedule -1]: Exited scheduler loop");
 	// Supporting Mechanisms
 	deinit_queues();
+	deinit_list();
 	// Context flows to cleanup.
+}
+
+void alert_waiting_threads(worker_t ended, void *ended_retval_ptr) {
+	Node *ptr = tcbs->front;
+
+	// Notify all threads who called worker_join(ended, retval).
+	while(!ptr) {
+		if (ptr->data->join_tid == ended) {
+			// No longer waiting on any thread.
+			ptr->data->join_tid = 0;
+
+			// Save data from exiting thread.
+			if (ended_retval_ptr != NULL) {
+				// This is only ever called from worker_exit. Not from cleanup().
+				// When cleanup calls this function, *join_retval is not overwritten.
+				*(ptr->data->join_retval) = ended_retval_ptr;
+			}
+		}
+		ptr = ptr->next;
+	}
 }
 
 void perform_cleanup() {
 	// If while condition is true, then scheduler job has not completed.
 	printf("INFO[cleanup context]: entered perform_clean()\n");
-	while(!isUninitialized(q_arrival) && !isUninitialized(q_scheduled)) {
+	while(!isUninitializedList(tcbs)) {
 		worker_t tid_ended = running->thread_id;
 		printf("INFO[CLEANUP]: Cleaned running tid (%d)\n", tid_ended);
+		alert_waiting_threads(tid_ended, NULL); // Never overwrite join return value.
 		// JOIN search: filter queue to update any worker waiting on tid_ended
-		// Allocated Heap space for TCB and TCB->uctx and TCB->uctx->uc_stack base ptr
+		remove_from(tcbs, tid_ended);
 
+		// Allocated Heap space for TCB and TCB->uctx and TCB->uctx->uc_stack base ptr
 		if (tid_ended != 1) {
 			/* main context's stack was not allocated. */
 			free(running->uctx->uc_stack.ss_sp); // Free the worker's stack
@@ -290,6 +321,7 @@ void perform_cleanup() {
 	free(scheduler);
 	free(cleanup->uc_stack.ss_sp);
 	free(cleanup);
+	scheduler = cleanup = NULL;
 }
 
 int worker_create(worker_t * thread, pthread_attr_t * attr, void
@@ -298,6 +330,7 @@ int worker_create(worker_t * thread, pthread_attr_t * attr, void
 	if (!scheduler) {
 		// First time library called.
 		init_queues();
+		init_list();
 		printf("INFO[worker_create]: printing arrival: \t\t");
 		print_queue(q_arrival);
 		printf("INFO[worker_create]: printing scheduled: \t");
@@ -327,6 +360,8 @@ int worker_create(worker_t * thread, pthread_attr_t * attr, void
 		running->thread_id = 1; // main first program
 		getcontext(running->uctx);
 		running->uctx->uc_link = cleanup;
+		
+		insert(tcbs, running);
 	}
 
 	printf("INFO[worker_create]: created TCB for new worker\n");
@@ -339,8 +374,11 @@ int worker_create(worker_t * thread, pthread_attr_t * attr, void
 	new_tcb->uctx->uc_link = cleanup; // all workers must flow into cleanup
 	new_tcb->uctx->uc_stack.ss_size = 4096;
 	new_tcb->uctx->uc_stack.ss_sp = malloc(4096);
+	new_tcb->join_tid = 0; // not waiting on anyone
+	new_tcb->join_retval = NULL;
 	makecontext(new_tcb->uctx, (void *) function, 1, arg); // TO-DO: verify correctness...
 
+	insert(tcbs, new_tcb);
 	enqueue(q_arrival, new_tcb);
 	
 	printf("INFO[worker_create]: enqueued new worker into Q_arrival\n");
@@ -355,10 +393,17 @@ int worker_yield() {
 }
 
 /* terminate a thread */
-void worker_exit(void *value_ptr);
+void worker_exit(void *value_ptr) {
+	alert_waiting_threads(running->thread_id, value_ptr);
+	// Collapse to cleanup.
+}
 
 /* wait for thread termination */
-int worker_join(worker_t thread, void **value_ptr);
+int worker_join(worker_t thread, void **value_ptr) {
+	running->join_tid = thread;
+	running->join_retval = value_ptr; // alert function will modify this. 
+	return swapcontext(running->uctx, scheduler);
+}
 
 //////////////////////////////////////////
 
