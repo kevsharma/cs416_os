@@ -1,0 +1,128 @@
+There are four functions defined:
+
+1. init_mutex
+2. lock_mutex
+3. unlock_mutex
+4. destroy_mutex
+
+We are operating with n user threads in exactly one process.
+Mutexes protect against shared resources. 
+
+- Approach 1 -
+
+In our project, we will require a list to keep track of 
+the created mutexes. This is a list of mutex_t. We require a list
+because at any given time, there may be more than one mutexes.
+
+mutex_t keeps the mutex identifier, and a thread_id field from tcb.
+If the thread_id is NULL then no thread has a lock over the mutex.
+
+It follows then that to lock_mutex means to change the value of the 
+mutex_t's id to be set to the thread_id of the thread which requested
+the lock_mutex operation. And to unlock a mutex means to reset the corresponding
+tid to NULL.
+
+Destroying a mutex means removing it from the list.
+
+- Approach 2 -
+
+The other approach is to use file with clever names to create mutexes.
+The file contains the tid of the holder. If the file is empty, the mutex
+can be claimed by any thread. Upon unlocking the mutex, we truncate the file.
+Upon deleting the mutex, we delete the file.
+
+=========
+
+CORE CHALLENGE: Waiting for a thread to give up the mutex.
+
+Approach 1:
+
+For a ucontext to access a critical region it must hold the mutex.
+If another ucontext holds the mutex, how can we pause running 
+the requesting (waiting) ucontext?
+
+For simplicity, we allow a waiting process's time slice to expire:
+-----------------------------------------------------
+    function lock_mutex(mutex_t) {
+        while(mutex_t holder tid != this thread) {
+            block signals
+            if mutex_t available:
+                acquire mutex
+            unblock signals
+        }
+    }
+-----------------------------------------------------
+
+This allows the ucontext to be preempted while waiting for the mutex
+and lets it exhausts clock cycles. It is an inefficient solution but very
+straightforward and easy to code. We also do not have to allocate any
+space for each tcb's waiting set of mutexes (see approach 2).
+
+For an MLFQ, this means that the waiting thread can eventually drop
+priority such that the holding thread can Round-Robin and have a chance
+to exit the critical section, thereby unlocking the mutex.
+
+Approach 2: 
+
+Each tcb holds a pointer to a list of mutexes that it is 
+waiting for. The scheduler skips this job if the mutexes this
+job is waiting for have not yet all been released.
+
+The scheduler would eventually queue the job which releases a lock.
+As contrasted with the first approach, this approach is more efficient but
+may become cumbersome to translate into code when we arrive at the MLFQ.
+- That is, a waiting thread, will not have its priority decreased.
+
+Let us examine the lock_mutex function for this approach:
+--------------------------------------------------------
+    function lock_mutex(mutex_t) {
+        block signals
+
+        while(mutex_t holder tid != NULL) {
+            this.thread_id->waiting_list.insert(mutex_t);
+            yield()
+        }
+        
+        acquire mutex
+        unblock signals
+    }
+
+    function unlock_mutex(mutex_t) {
+        block signals
+
+        for each tcb* t in tcb* list:
+            if t->waiting_list contains mutex_t:
+                remove mutex_t from t's waiting list
+        
+        mutex_t's tid = NULL // in global mutex list
+
+        unblock signals
+    }
+--------------------------------------------------------
+
+The worker yields back to the scheduler since it cannot
+perform any meaningful computation. This goes hand in hand
+with the Scheduler skipping over this thread if its
+waiting mutex list is not empty. A scheduler queues a lower
+priority job (cumbersome code for MLFQ) but not a waiting one.
+
+Examine the unlock_mutex(mutex_t) function that is made to match 
+the immediately prior lock mutex function. It releases the lock
+over the mutex and does the work of removing that lock from every
+tcb's waiting list. 
+
+Suppose tcb A and B are waiting only on a mutex m. If tcb C releases 
+the mutex m, then both A and B's waiting list is empty. By definition,
+A and B can only be waiting on m if their %eip is within the lock_mutex
+function. If A is scheduled, then it will notice that the mutex it is 
+waiting on has been released, accordingly it can grab that mutex and 
+enter the critical section.
+
+Because B's list no longer contains the mutex, when it is scheduled
+to run, the while loop will notice that A holds the mutex and hence
+B's waiting list is again union-d with the mutex_t. Note that a 
+race condition cannot happen between the while guard and the 
+waiting list insertion because of the yield call and one kernel thread
+execution model.
+
+....x....These have been some thoughts...x....
