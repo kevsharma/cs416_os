@@ -57,14 +57,24 @@ static Queue *q_arrival;
 static Queue *q_scheduled;
 static List *tcbs;
 
-static ucontext_t *scheduler; // In a repeat loop in schedule();
-static ucontext_t *cleanup; // Cleans up after a worker thread ends. Workers' uc_link points to this;
-
-static tcb *running; // Currently executing thread; CANNOT BE SCHEDULER, CLEANUP;
-static mutex_list *mutexes; // list of (mutex_num, holder_tid) for currently init-d mutexes.
+static ucontext_t *scheduler;
+/**
+ * The cleanup context is used to reap terminated worker_threads.
+ * When a worker thread is created, its uc_link points to cleanup.
+ * - As such, upon terminating, control flows to the cleanup context.
+*/
+static ucontext_t *cleanup;
 
 static worker_t *last_created_worker_tid;
 static mutex_num *current_mutex_num;
+static mutex_list *mutexes; // list of (mutex_num, holder_tid) for currently init-d mutexes.
+
+/**
+ * running points to the currently executing thread.
+ * If running is NULL: the previous running thread was cleaned up by ucontext cleanup.
+*/
+static tcb *running; // Currently executing thread.
+
 ////////////////////////////////////////////////////////////////////////////////////////////
 
 void print_mutex_list(mutex_list *mutexes) {
@@ -79,97 +89,80 @@ void print_mutex_list(mutex_list *mutexes) {
     printf("\n");
 }
 
-void init_queues() {
-	assert(isUninitialized(q_arrival));
-	assert(isUninitialized(q_scheduled));
+/* Registered with atexit() upon library's first use invocation. */
+void cleanup_library() {
+	/* Remove main from scheduled queue and tcbs list.*/
+	running = dequeue(q_scheduled);	// Empties scheduled list since last thread.
+	remove_from(tcbs, MAIN_THREAD); // Empties tcbs list since last thread.
+	free(running->uctx);
+	free(running);
 
-	q_arrival = malloc(sizeof(Queue));
-	q_arrival->size = 0;
-	q_arrival->rear = NULL;
-
-	q_scheduled = malloc(sizeof(Queue));
-	q_scheduled->size = 0;
-	q_scheduled->rear = NULL;
-}
-
-void init_list() {
-	assert(isUninitializedList(tcbs));
-	tcbs = malloc(sizeof(List));
-	tcbs->size = 0;
-	tcbs->front = NULL;
-}
-
-void deinit_queues() {
-	assert(isEmpty(q_arrival) && isEmpty(q_scheduled));
+	/* Free all allocated library mechanisms. */
+	assert(isEmpty(q_arrival));
 	free(q_arrival);
+	assert(isEmpty(q_scheduled));
 	free(q_scheduled);
-	q_arrival = NULL;
-	q_scheduled = NULL;
-}
 
-void deinit_list() {
-	assert(tcbs->size <= 1); /* Only the main context within list */
+	assert(isEmptyList(tcbs));
 	free(tcbs);
-	tcbs = NULL;
+
+	free(last_created_worker_tid);
+	free(current_mutex_num);
+	free(mutexes);
+
+	free(scheduler->uc_stack.ss_sp);
+	free(scheduler);
+	free(cleanup->uc_stack.ss_sp);
+	free(cleanup);
 }
 
-/* returns 0 if [thread_id] is not waiting on a thread, 1 otherwise. */
+/* returns 1 if [thread_id] is waiting on a thread, 0 otherwise. */
 int is_waiting_on_a_thread(tcb *thread) {
 	return thread->join_tid != NONEXISTENT_THREAD;
 }
 
+/* returns 1 if [thread_id] is waiting on a lock, 0 otherwise. */
 int is_waiting_on_a_mutex(tcb *thread) {
 	return thread->seeking_lock != NONEXISTENT_MUTEX;
 }
 
+/* returns 1 if thread is blocked, 0 otherwise. */
 int is_blocked(tcb *thread) {
 	return is_waiting_on_a_thread(thread) || is_waiting_on_a_mutex(thread);
 }
 
-void schedule() {
-	printf("INFO[schedule 1]: Entered Scheduler for the first time\n");
-	// If either queue contains a job, scheduler not done.q_arrival 
-	// Further, if running not cleaned up - it was preempted.
-	while(!isEmpty(q_arrival) || !isEmpty(q_scheduled) || (running != NULL)) {
-		printf("INFO[schedule 2]: entered scheduler loop. Scheduled Queue: ");
-		print_queue(q_scheduled);
+void round_robin_scheduler() {
+	while(1) {
+		printf("INFO[schedule 1]: entered scheduler loop. Scheduled Queue: "); print_queue(q_scheduled);
 
 		// Insert newly arrived jobs into schedule queue.
-		if (!isEmpty(q_arrival)) {
+		while(!isEmpty(q_arrival)) {
+			print_queue(q_arrival); print_queue(q_scheduled);
 			enqueue(q_scheduled, dequeue(q_arrival));
-			continue;
 		}
 
-		printf("INFO[schedule 3.5]: About to perform running check.\n");
-		// Both queues empty, but exists one remaining job - running.
-		if(running != NULL) {
-			printf("INFO[schedule 4]: Enqueued Running tid (%d)\n", running->thread_id);
-			enqueue(q_scheduled, running);
-		}
-		printf("INFO[schedule 4.5]: Running is NULL.\n");
-
-
+		/* Scheduler logic: */
 		do {
-			// running can be NULL after worker exits & cleanup frees associated memory.
-			if (running != NULL) { // dont enqueue null job.
+			if (running != NULL) { // dont enqueue terminated job freed up by cleanup context.
+				print_queue(q_scheduled);
 				enqueue(q_scheduled, running);
 			}
 
 			running = dequeue(q_scheduled);
-			if(is_blocked(running))
-				printf("INFO[schedule 4]: Enqueued Running tid (%d) BCUZ BLOCKED\n", running->thread_id);
+
+			print_queue(q_scheduled);
+			if(is_blocked(running)) 
+				printf("INFO[schedule 4]: skipped tid (%d) BCUZ BLOCKED\n", running->thread_id);
 
 		} while(is_blocked(running));
 		
 		printf("INFO[schedule 5]: Scheduling tid (%d)\n", running->thread_id);
+		/**
+		 * Only start timer IFF tcb's list size is greater than 1 (> 1).
+		 * This way, we do not context switch out of main if there is no point to doing so.
+		*/
 		swapcontext(scheduler, running->uctx);
 	}
-
-	printf("INFO[schedule -1]: Exited scheduler loop");
-	// Supporting Mechanisms
-	deinit_queues();
-	deinit_list();
-	// Context flows to cleanup.
 }
 
 void alert_waiting_threads(worker_t ended, void *ended_retval_ptr) {
@@ -191,10 +184,8 @@ void alert_waiting_threads(worker_t ended, void *ended_retval_ptr) {
 	}
 }
 
-void perform_cleanup() {
-	// If while condition is true, then scheduler job has not completed.
-	printf("INFO[cleanup context]: entered perform_clean()\n");
-	while(!isUninitializedList(tcbs)) {
+void clean_exited_worker_thread() {
+	while(1) {
 		worker_t tid_ended = running->thread_id;
 		printf("INFO[CLEANUP]: Cleaned running tid (%d)\n", tid_ended);
 
@@ -202,40 +193,33 @@ void perform_cleanup() {
 		remove_from(tcbs, tid_ended);
 
 		// Allocated Heap space for TCB and TCB->uctx and TCB->uctx->uc_stack base ptr
-		// We won't ever reach here if MAIN_THREAD terminates (process ends).
 		free(running->uctx->uc_stack.ss_sp);
 		free(running->uctx);
 		free(running);
-		running = NULL; // IMPORTANT FLAG (see scheduler while guard)
+
+		running = NULL; // IMPORTANT FLAG so scheduler doesn't enqueue cleaned thread.
 		swapcontext(cleanup, scheduler);
 	}
-
-	// unfortunately we will never get here onwards... -> hence memory leak.
-
-	// free supporting memory allocated mechanisms.
-	printf("\nINFO[cleanup context]: frees supporting mechanisms\n");
-	free(last_created_worker_tid);
-	free(current_mutex_num);
-	free(mutexes);
-
-	printf("\nINFO[cleanup context]: frees initiated of scheduler and cleanup contexts\n");
-	// Scheduler done too.
-	free(scheduler->uc_stack.ss_sp);
-	free(scheduler);
-	free(cleanup->uc_stack.ss_sp);
-	free(cleanup);
-	scheduler = cleanup = NULL;
 }
 
+/* Initializes user-level threads library supporting mechanisms. */
 void init_library() {
-	// Initialize supporting mechanisms.
-	init_queues();
-	init_list();
+	// Initialize arrival and scheduled queue.
+	assert(isUninitialized(q_arrival));
+	q_arrival = (Queue *) malloc(sizeof(Queue));
+	q_arrival->size = 0;
+	q_arrival->rear = NULL;
 
-	printf("INFO[worker_create]: printing arrival: \t\t");
-	print_queue(q_arrival);
-	printf("INFO[worker_create]: printing scheduled: \t");
-	print_queue(q_scheduled);
+	assert(isUninitialized(q_scheduled));
+	q_scheduled = (Queue *) malloc(sizeof(Queue));
+	q_scheduled->size = 0;
+	q_scheduled->rear = NULL;
+	
+	// Initialize the tcbs list. 
+	assert(isUninitializedList(tcbs));
+	tcbs = (List *) malloc(sizeof(List));
+	tcbs->size = 0;
+	tcbs->front = NULL;
 
 	// Scheduler and Cleanup should be referenced from any context (hence heap).
 	scheduler = (ucontext_t *) malloc(sizeof(ucontext_t));
@@ -243,26 +227,32 @@ void init_library() {
 
 	// Create scheduler context
 	getcontext(scheduler);
-	scheduler->uc_link = cleanup;
+	scheduler->uc_link = NULL; // no longer cleanup. see atexit registered function.
 	scheduler->uc_stack.ss_size = 4096;
 	scheduler->uc_stack.ss_sp = malloc(4096);
-	makecontext(scheduler, schedule, 0);
+	makecontext(scheduler, round_robin_scheduler, 0);
 
 	// Create cleanup context
 	getcontext(cleanup);
 	cleanup->uc_link = NULL;
 	cleanup->uc_stack.ss_size = 4096;
 	cleanup->uc_stack.ss_sp = malloc(4096);
-	makecontext(cleanup, perform_cleanup, 0);
+	makecontext(cleanup, clean_exited_worker_thread, 0);
 
-	// worker_create should get a monotonically increasing worker_t tid.
+	// worker_create should associate a new thread with an increasing worker_t tid.
 	last_created_worker_tid = (worker_t *) malloc(sizeof(worker_t));
 	*last_created_worker_tid = MAIN_THREAD;
 
-	// mutexes should not overlap - also monotonically increasing.
+	// preserve distinctness of mutex numbers - also monotonically increasing.
 	current_mutex_num = (mutex_num *) malloc(sizeof(mutex_num));
 	*current_mutex_num = INITIAL_MUTEX;
 	mutexes = (mutex_list *) malloc(sizeof(mutex_list));
+
+	// Register atexit() function to clean up supporting mechanisms.
+	if (atexit(cleanup_library) != 0) {
+		printf("Will be unable to free user level threads library mechanisms.\n");
+	}
+
 }
 
 int worker_create(worker_t * thread, pthread_attr_t * attr, void
@@ -286,23 +276,24 @@ int worker_create(worker_t * thread, pthread_attr_t * attr, void
 	// Create tcb for new_worker and put into q_arrival queue
 	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
 	new_tcb->thread_id = ++(*last_created_worker_tid);
+	new_tcb->join_tid = NONEXISTENT_THREAD; // not waiting on any thread
+	new_tcb->join_retval = NULL;
+	new_tcb->seeking_lock = NONEXISTENT_MUTEX; // not waiting on any lock
+
 	new_tcb->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
 	getcontext(new_tcb->uctx); // heap space stores context
 	new_tcb->uctx->uc_link = cleanup; // all workers must flow into cleanup
 	new_tcb->uctx->uc_stack.ss_size = 4096;
 	new_tcb->uctx->uc_stack.ss_sp = malloc(4096);
-	new_tcb->join_tid = NONEXISTENT_THREAD; // not waiting on any thread
-	new_tcb->join_retval = NULL;
-	new_tcb->seeking_lock = NONEXISTENT_MUTEX; // not waiting on any lock
 	makecontext(new_tcb->uctx, (void *) function, 1, arg); 
 
 	// Put newly created tcb into structures used by the library.
-	insert(tcbs, new_tcb);
 	enqueue(q_arrival, new_tcb);
+	insert(tcbs, new_tcb);
 	
-	printf("INFO[worker_create]: enqueued new worker into Q_arrival\n");
-	printf("INFO[worker_create]: printing arrival: \t\t");
+	printf("INFO[worker_create]: enqueued new worker into arrival queue: ");
 	print_queue(q_arrival);
+
 	return 0;
 };
 
