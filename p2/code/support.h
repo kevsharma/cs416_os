@@ -12,3 +12,5 @@ int isEmpty(Queue *q_ptr);
 void enqueue(Queue* q_ptr, tcb *data);
 tcb* dequeue(Queue *q_ptr);
 void print_queue(Queue* q_ptr);
+
+void print_mutex_list(mutex_list *mutexes);

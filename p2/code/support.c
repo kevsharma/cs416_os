@@ -156,3 +156,15 @@ void print_queue(Queue* q_ptr) {
         printf("%d, ", iterator->data->thread_id);
     printf("%d\n", iterator->data->thread_id);
 }
+
+void print_mutex_list(mutex_list *mutexes) {
+    mutex_node *ptr = mutexes->front;
+    printf("Printing lst: \n");
+    
+    while(ptr) {
+        printf("%d held by %d.\n", ptr->data->lock_num, ptr->data->holder_tid);
+        ptr = ptr->next;
+    }
+
+    printf("\n");
+}

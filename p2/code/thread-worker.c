@@ -33,7 +33,7 @@
  * NONEXISTENT_MUTEX is used within seeking_lock attribute of TCB
  * to indicate that a thread is not waiting to acquire any lock.
  * 
- * The seeking_lock attribute of a tcb is used by the scheduler to indicate
+ * The seeking_lock attribute of a tcb is used by the scheduler to indicatecurrent_mutex_num
  * whether the thread should be skipped in light of the thread waiting
  * for another thread to unlock a mutex.
 */
@@ -65,45 +65,6 @@ static tcb *running; // Currently executing thread.
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-void print_mutex_list(mutex_list *mutexes) {
-    mutex_node *ptr = mutexes->front;
-    printf("Printing lst: \n");
-    
-    while(ptr) {
-        printf("%d held by %d.\n", ptr->data->lock_num, ptr->data->holder_tid);
-        ptr = ptr->next;
-    }
-
-    printf("\n");
-}
-
-/* Registered with atexit() upon library's first use invocation. */
-void cleanup_library() {
-	/* Remove main from scheduled queue and tcbs list.*/
-	// main already removed lol //running = dequeue(q_scheduled);	// Empties scheduled list since last thread.
-	remove_from(tcbs, MAIN_THREAD); // Empties tcbs list since last thread.
-	free(running->uctx);
-	free(running);
-
-	/* Free all allocated library mechanisms. */
-	assert(isEmpty(q_arrival));
-	free(q_arrival);
-	assert(isEmpty(q_scheduled));
-	free(q_scheduled);
-
-	assert(isEmptyList(tcbs));
-	free(tcbs);
-
-	free(last_created_worker_tid);
-	free(current_mutex_num);
-	free(mutexes);
-
-	free(scheduler->uc_stack.ss_sp);
-	free(scheduler);
-	free(cleanup->uc_stack.ss_sp);
-	free(cleanup);
-}
-
 /* returns 1 if [thread_id] is waiting on a thread, 0 otherwise. */
 int is_waiting_on_a_thread(tcb *thread) {
 	return thread->join_tid != NONEXISTENT_THREAD;
@@ -119,6 +80,45 @@ int is_blocked(tcb *thread) {
 	return is_waiting_on_a_thread(thread) || is_waiting_on_a_mutex(thread);
 }
 
+/**
+ * There may be a group of threads waiting for (joined on) the current thread
+ * to terminate. Hence, when the current thread does terminate, we ensure that
+ * the tcb structures of the threads waiting on this one are updated to reflect
+ * the fact that they are ready to be scheduled.
+ * 
+ * When tcb attribute join_tid is equal to NONEXISTENT thread, a thread
+ * is not waiting on any other thread to complete. Accordingly, it is not
+ * blocked and won't be skipped by the scheduler. If we fail to update
+ * the waiting thread's tcb join_tid attribute to NONEXISTENT, then the 
+ * scheduler will skip it in perpetuity. This function aids the worker_exit
+ * call to inform the scheduler (indirectly) to now no longer skip
+ * the threads waiting on it.
+*/
+void alert_waiting_threads(worker_t ended, void *ended_retval_ptr) {
+	Node *ptr = tcbs->front;
+
+	// Notify all threads who called worker_join(ended, retval).
+	while(!ptr) {
+		if (ptr->data->join_tid == ended) {
+			ptr->data->join_tid = NONEXISTENT_THREAD; // No longer waiting.
+
+			// Save data from exiting thread.
+			if (ended_retval_ptr != NULL) {
+				// This is only ever called from worker_exit. Not from cleanup().
+				// When cleanup calls this function, *join_retval is not overwritten.
+				*(ptr->data->join_retval) = ended_retval_ptr;
+			}
+		}
+		ptr = ptr->next;
+	}
+}
+
+/** 
+ * This function is invoked when scheduler context first runs.
+ * When main creates a thread, the library's associated mechanisms are initialized;
+ * when main later waits on a thread (via a call to worker_join), the scheduler 
+ * is afforded the chance to execute this function for the first time.
+*/
 void round_robin_scheduler() {
 	while(1) {
 		printf("INFO[schedule 1]: entered scheduler loop. Scheduled Queue: "); print_queue(q_scheduled);
@@ -153,41 +153,54 @@ void round_robin_scheduler() {
 	}
 }
 
-void alert_waiting_threads(worker_t ended, void *ended_retval_ptr) {
-	Node *ptr = tcbs->front;
-
-	// Notify all threads who called worker_join(ended, retval).
-	while(!ptr) {
-		if (ptr->data->join_tid == ended) {
-			ptr->data->join_tid = NONEXISTENT_THREAD; // No longer waiting.
-
-			// Save data from exiting thread.
-			if (ended_retval_ptr != NULL) {
-				// This is only ever called from worker_exit. Not from cleanup().
-				// When cleanup calls this function, *join_retval is not overwritten.
-				*(ptr->data->join_retval) = ended_retval_ptr;
-			}
-		}
-		ptr = ptr->next;
-	}
-}
-
+/**
+ * This function invoked when cleanup context first runs. 
+ * Ending workers pass control to cleanup context. See uc_link of created workers.
+ */
 void clean_exited_worker_thread() {
 	while(1) {
 		worker_t tid_ended = running->thread_id;
-		printf("INFO[CLEANUP]: Cleaned running tid (%d)\n", tid_ended);
 
-		alert_waiting_threads(tid_ended, NULL); // Never overwrite join return value.
+		/* The following alert call is necessary if worker_thread forgot to call worker_exit().*/
+		alert_waiting_threads(tid_ended, NULL); // Never overwrite join return value. 
 		remove_from(tcbs, tid_ended);
 
 		// Allocated Heap space for TCB and TCB->uctx and TCB->uctx->uc_stack base ptr
 		free(running->uctx->uc_stack.ss_sp);
 		free(running->uctx);
 		free(running);
-
 		running = NULL; // IMPORTANT FLAG so scheduler doesn't enqueue cleaned thread.
+
+		printf("INFO[CLEANUP]: Cleaned running tid (%d)\n", tid_ended);
 		swapcontext(cleanup, scheduler);
 	}
+}
+
+/* Registered with atexit() upon library's first use invocation. */
+void cleanup_library() {
+	/* Remove main from scheduled queue and tcbs list.*/
+	// main already removed lol //running = dequeue(q_scheduled);	// Empties scheduled list since last thread.
+	remove_from(tcbs, MAIN_THREAD); // Empties tcbs list since last thread.
+	free(running->uctx);
+	free(running);
+
+	/* Free all allocated library mechanisms. */
+	assert(isEmpty(q_arrival));
+	free(q_arrival);
+	assert(isEmpty(q_scheduled));
+	free(q_scheduled);
+
+	assert(isEmptyList(tcbs));
+	free(tcbs);
+
+	free(last_created_worker_tid);
+	free(current_mutex_num);
+	free(mutexes);
+
+	free(scheduler->uc_stack.ss_sp);
+	free(scheduler);
+	free(cleanup->uc_stack.ss_sp);
+	free(cleanup);
 }
 
 /* Initializes user-level threads library supporting mechanisms. */
@@ -246,6 +259,7 @@ void init_library() {
 int worker_create(worker_t * thread, pthread_attr_t * attr, void
     *(*function)(void*), void * arg)
 {
+	// block signals - accessing shared resource: tcb list and queues.
 	if (!scheduler) {
 		// First time library called, hence initialize the library:
 		init_library();
@@ -282,6 +296,7 @@ int worker_create(worker_t * thread, pthread_attr_t * attr, void
 	printf("INFO[worker_create]: enqueued new worker into arrival queue: ");
 	print_queue(q_arrival);
 
+	// unblock signals.
 	return 0;
 };
 
@@ -292,8 +307,10 @@ int worker_yield() {
 
 /* terminate a thread */
 void worker_exit(void *value_ptr) {
-	alert_waiting_threads(running->thread_id, value_ptr);
-	// Collapse to cleanup.
+	// block signals - accessing shared tcb list in alert.
+	alert_waiting_threads(running->thread_id, value_ptr); 
+	// unblock signals - finished accessing shared tcb list. (redundent since context ends)
+	// Transfer then flows to cleanup context.
 }
 
 /* wait for thread termination */
