@@ -1,6 +1,223 @@
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "support.h"
+#include <ucontext.h>
+#include <assert.h>
+
+typedef unsigned int worker_t;
+typedef unsigned int mutex_num;
+
+/* mutex struct definition */
+typedef struct worker_mutex_t {
+	mutex_num lock_num;
+	worker_t holder_tid;
+} worker_mutex_t;
+
+typedef struct TCB {
+	worker_t 		thread_id;
+	ucontext_t 		*uctx; 
+	worker_t		join_tid;		/* NONEXISTENT_THREAD if not currently waiting on another thread. */
+	void **			join_retval;	
+	mutex_num		seeking_lock;	/* NONEXISTENT_MUTEX if not seeking to acquire a mutex. */
+} tcb; 
+
+typedef struct Node {
+    tcb *data;
+    struct Node *next;
+} Node;
+
+/* Singular Linked List */
+typedef struct List {
+    unsigned short size;
+    struct Node *front;
+} List;
+
+/* Circular Linked List */
+typedef struct Queue {
+    unsigned short size;
+    struct Node *rear;
+} Queue;
+
+typedef struct mutex_node {
+    worker_mutex_t *data;
+    struct mutex_node *next;
+} mutex_node;
+
+/* Singular Linked List */
+typedef struct mutex_list {
+    struct mutex_node *front;
+} mutex_list;
+
+/* Function Declarations: */
+
+int isUninitializedList(List *lst_ptr) {
+    return !lst_ptr;
+}
+
+int isEmptyList(List *lst_ptr) { 
+    assert(!isUninitializedList(lst_ptr));
+    return lst_ptr->size == 0;
+}
+
+/* Inserts to front of list. */
+void insert(List *lst_ptr, tcb *data) {
+    assert(!isUninitializedList(lst_ptr));
+
+    Node *item = (Node *) malloc(sizeof(Node));
+    item->data = data;
+    item->next = lst_ptr->front;
+    ++(lst_ptr->size);
+    lst_ptr->front = item;
+}
+
+/* Returns 1 if the list contains the worker, else returns 0.*/
+int contains(List *lst_ptr, worker_t target) {
+    Node *ptr = lst_ptr->front;
+    while(ptr) {
+        if (ptr->data->thread_id == target) {
+            return 1;
+        }
+        ptr = ptr->next;
+    }
+
+    return 0;
+}
+
+tcb* remove_from(List *lst_ptr, worker_t target) {
+    assert(!isEmptyList(lst_ptr));
+    assert(contains(lst_ptr, target));
+
+    Node *front = lst_ptr->front;
+    tcb *target_tcb;
+
+    if (front->data->thread_id == target) {
+        Node *match = front;
+        target_tcb = match->data;
+        lst_ptr->front = front->next;
+        --(lst_ptr->size);
+
+        free(match);
+        return target_tcb;
+    }
+
+    Node *ptr = front->next;
+    Node *prev = front;
+
+    for (; !ptr; prev = prev->next, ptr = ptr->next) {
+        if (ptr->data->thread_id != target) {
+            continue;
+        }
+
+        prev->next = ptr->next;
+        --(lst_ptr->size);
+
+        target_tcb = ptr->data;
+        free(ptr);
+        break;
+    }
+
+    return target_tcb;
+}
+
+void print_list(List *lst_ptr) {
+    Node *ptr = lst_ptr->front;
+    printf("Printing lst: ");
+    
+    while(ptr) {
+        printf("%d ", ptr->data->thread_id);
+        ptr = ptr->next;
+    }
+
+    printf("\n");
+}
+
+int isUninitialized(Queue *q_ptr) {
+    return !q_ptr;
+}
+
+int isEmpty(Queue *q_ptr) { 
+    assert(!isUninitialized(q_ptr));
+    return q_ptr->size == 0;
+}
+
+/* O(1) Enqueue Operation */
+void enqueue(Queue* q_ptr, tcb *data) {
+    assert(!isUninitialized(q_ptr));
+
+	Node *item = (Node *) malloc(sizeof(Node));
+	item->data = data;
+	item->next = NULL;
+
+    if (isEmpty(q_ptr)) {
+        // Note that rear is null.
+        q_ptr->rear = item;
+        q_ptr->rear->next = item;
+    } else {
+        // Rear is not null.
+        item->next = q_ptr->rear->next;
+        q_ptr->rear->next = item;
+        q_ptr->rear = item;
+    }
+    
+    ++(q_ptr->size);
+}
+
+/* Retrieves and removes the head of this queue, or returns null if this queue is empty. */
+tcb* dequeue(Queue *q_ptr) {
+    assert(!isUninitialized(q_ptr));
+    assert(!isEmpty(q_ptr));
+
+    Node* front;
+
+    if (q_ptr->size == 1) {
+        front = q_ptr->rear; // rear is front.
+        front->next = NULL; // rear pointed to itself.
+        q_ptr->rear = NULL;
+    } else {
+		// if size == 2, dequeue results in rear pointing to itself.
+		front = q_ptr->rear->next;
+		q_ptr->rear->next = front->next;
+	}
+	
+	--(q_ptr->size);
+
+    // Extract data and free queue abstraction (node).
+	tcb *result = front->data;
+	free(front);
+	
+	return result;
+}
+
+void print_queue(Queue* q_ptr) {
+	if (isUninitialized(q_ptr)) {
+		printf("INFO[print_queue]: q_ptr unintialized\n");
+		return;
+	}
+	
+	if (isEmpty(q_ptr)) {
+		printf("INFO[print_queue]: queue is empty\n");
+		return;
+	}
+
+    Node* iterator = q_ptr->rear->next; // start at front;
+    for(; iterator != q_ptr->rear; iterator = iterator->next)
+        printf("%d, ", iterator->data->thread_id);
+    printf("%d\n", iterator->data->thread_id);
+}
+
+void print_mutex_list(mutex_list *mutexes) {
+    mutex_node *ptr = mutexes->front;
+    printf("Printing lst: \n");
+    
+    while(ptr) {
+        printf("%d held by %d.\n", ptr->data->lock_num, ptr->data->holder_tid);
+        ptr = ptr->next;
+    }
+
+    printf("\n");
+}
 
 /**
  * When the library is first used, this calling context populates
@@ -96,14 +313,15 @@ int is_blocked(tcb *thread) {
 */
 void alert_waiting_threads(worker_t ended, void *ended_retval_ptr) {
 	Node *ptr = tcbs->front;
-
+	print_list(tcbs);
 	printf("[ALERT]: %d ended and alerting\n", ended);
 	exit;
 	// Notify all threads who called worker_join(ended, retval).
-	while(!ptr) {
+	while(ptr) {
+		printf("%d is waiting on %d\n", ptr->data->thread_id, ptr->data->join_tid);
 		if (ptr->data->join_tid == ended) {
 			ptr->data->join_tid = NONEXISTENT_THREAD; // No longer waiting.
-			printf("\n\n[ALERT]: %d alerted that %d ended.\n\n", ptr->data->join_tid, running->thread_id);
+			printf("\n\n[ALERT]: %d alerted that %d ended.\n\n", ptr->data->thread_id, running->thread_id);
 
 			// Save data from exiting thread.
 			if (ended_retval_ptr != NULL) {
@@ -282,6 +500,7 @@ int worker_create(worker_t * thread, void*(*function)(void*), void * arg)
 	// Create tcb for new_worker and put into q_arrival queue
 	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
 	new_tcb->thread_id = ++(*last_created_worker_tid);
+	*thread = new_tcb->thread_id;
 	new_tcb->join_tid = NONEXISTENT_THREAD; // not waiting on any thread
 	new_tcb->join_retval = NULL;
 	new_tcb->seeking_lock = NONEXISTENT_MUTEX; // not waiting on any lock
@@ -319,6 +538,7 @@ void worker_exit(void *value_ptr) {
 
 /* wait for thread termination */
 int worker_join(worker_t thread, void **value_ptr) {
+	printf("%d is going to wait on %d\n", running->thread_id, thread);
 	running->join_tid = thread;
 	running->join_retval = value_ptr; // alert function will modify this. 
 	return swapcontext(running->uctx, scheduler);
@@ -469,15 +689,15 @@ int main(int argc, char **argv) {
 	printf("MAIN: Starting main: no queues running yet\n");
 
 	worker_t worker_1;
-	//worker_t worker_2;
+	worker_t worker_2;
 	worker_create(&worker_1, (void *) &func_bar, NULL);
-	//worker_create(&worker_2, (void *) &func_bar, NULL);
+	worker_create(&worker_2, (void *) &func_bar, NULL);
 
 	printf("MAIN: before joining 1\n");
 
 	//worker_create(&worker_3, NULL, (void *) &func_bar, NULL);
 	worker_join(worker_1, NULL);
-	//worker_join(worker_2, NULL);
+	worker_join(worker_2, NULL);
 	//worker_join(worker_3, NULL);
 
 	/*
@@ -490,3 +710,4 @@ int main(int argc, char **argv) {
 
 	printf("MAIN: Ending main\n");
 }
+
