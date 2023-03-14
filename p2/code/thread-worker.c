@@ -113,6 +113,19 @@ void deinit_list() {
 	tcbs = NULL;
 }
 
+/* returns 0 if [thread_id] is not waiting on a thread, 1 otherwise. */
+int is_waiting_on_a_thread(tcb *thread) {
+	return thread->join_tid != NONEXISTENT_THREAD;
+}
+
+int is_waiting_on_a_mutex(tcb *thread) {
+	return thread->seeking_lock != NONEXISTENT_MUTEX;
+}
+
+int is_blocked(tcb *thread) {
+	return is_waiting_on_a_thread(thread) || is_waiting_on_a_mutex(thread);
+}
+
 void schedule() {
 	printf("INFO[schedule 1]: Entered Scheduler for the first time\n");
 	// If either queue contains a job, scheduler not done.q_arrival 
@@ -120,11 +133,10 @@ void schedule() {
 	while(!isEmpty(q_arrival) || !isEmpty(q_scheduled) || (running != NULL)) {
 		printf("INFO[schedule 2]: entered scheduler loop. Scheduled Queue: ");
 		print_queue(q_scheduled);
+
 		// Insert newly arrived jobs into schedule queue.
 		if (!isEmpty(q_arrival)) {
-			tcb *newly_arrived_job = dequeue(q_arrival);
-			enqueue(q_scheduled, newly_arrived_job);
-			printf("INFO[schedule 3]: put tid (%d) into scheduled queue.\n", newly_arrived_job->thread_id);
+			enqueue(q_scheduled, dequeue(q_arrival));
 			continue;
 		}
 
@@ -136,10 +148,20 @@ void schedule() {
 		}
 		printf("INFO[schedule 4.5]: Running is NULL.\n");
 
-		running = dequeue(q_scheduled);
-		printf("DEBUG[schedule 5]: dequeued %d\n", running->thread_id);
-		//printf("DEBUG[schedule 6]: dequeued uctx: %d\n", running->uctx);
 
+		do {
+			// running can be NULL after worker exits & cleanup frees associated memory.
+			if (running != NULL) { // dont enqueue null job.
+				enqueue(q_scheduled, running);
+			}
+
+			running = dequeue(q_scheduled);
+			if(is_blocked(running))
+				printf("INFO[schedule 4]: Enqueued Running tid (%d) BCUZ BLOCKED\n", running->thread_id);
+
+		} while(is_blocked(running));
+		
+		printf("INFO[schedule 5]: Scheduling tid (%d)\n", running->thread_id);
 		swapcontext(scheduler, running->uctx);
 	}
 
@@ -175,20 +197,20 @@ void perform_cleanup() {
 	while(!isUninitializedList(tcbs)) {
 		worker_t tid_ended = running->thread_id;
 		printf("INFO[CLEANUP]: Cleaned running tid (%d)\n", tid_ended);
+
 		alert_waiting_threads(tid_ended, NULL); // Never overwrite join return value.
-		// JOIN search: filter queue to update any worker waiting on tid_ended
 		remove_from(tcbs, tid_ended);
 
 		// Allocated Heap space for TCB and TCB->uctx and TCB->uctx->uc_stack base ptr
-		if (tid_ended != MAIN_THREAD) {
-			/* main context's stack was not allocated. */
-			free(running->uctx->uc_stack.ss_sp); // Free the worker's stack
-		}
+		// We won't ever reach here if MAIN_THREAD terminates (process ends).
+		free(running->uctx->uc_stack.ss_sp);
 		free(running->uctx);
 		free(running);
 		running = NULL; // IMPORTANT FLAG (see scheduler while guard)
 		swapcontext(cleanup, scheduler);
 	}
+
+	// unfortunately we will never get here onwards... -> hence memory leak.
 
 	// free supporting memory allocated mechanisms.
 	printf("\nINFO[cleanup context]: frees supporting mechanisms\n");
@@ -263,17 +285,18 @@ int worker_create(worker_t * thread, pthread_attr_t * attr, void
 	printf("INFO[worker_create]: created TCB for new worker\n");
 	// Create tcb for new_worker and put into q_arrival queue
 	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
-	new_tcb->thread_id = ++(*last_created_worker_tid); // thread id stored in tcb
-	
+	new_tcb->thread_id = ++(*last_created_worker_tid);
 	new_tcb->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
 	getcontext(new_tcb->uctx); // heap space stores context
 	new_tcb->uctx->uc_link = cleanup; // all workers must flow into cleanup
 	new_tcb->uctx->uc_stack.ss_size = 4096;
 	new_tcb->uctx->uc_stack.ss_sp = malloc(4096);
-	new_tcb->join_tid = 0; // not waiting on anyone
+	new_tcb->join_tid = NONEXISTENT_THREAD; // not waiting on any thread
 	new_tcb->join_retval = NULL;
-	makecontext(new_tcb->uctx, (void *) function, 1, arg); // TO-DO: verify correctness...
+	new_tcb->seeking_lock = NONEXISTENT_MUTEX; // not waiting on any lock
+	makecontext(new_tcb->uctx, (void *) function, 1, arg); 
 
+	// Put newly created tcb into structures used by the library.
 	insert(tcbs, new_tcb);
 	enqueue(q_arrival, new_tcb);
 	
@@ -300,7 +323,6 @@ int worker_join(worker_t thread, void **value_ptr) {
 	running->join_retval = value_ptr; // alert function will modify this. 
 	return swapcontext(running->uctx, scheduler);
 }
-
 
 int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t *mutexattr) {
     // block signals (we will access shared mutex list).
@@ -457,9 +479,7 @@ int main(int argc, char **argv) {
 	*/
 
 	printf("MAIN: Ending main\n");
-	setcontext(cleanup);
+	// ITS TIME TO REPLACE THIS WITH JOIN
+	//setcontext(cleanup);
 	// let main naturally flow control to scheduler upon calling join.
 }
-
-
-// gcc -o thread-worker thread-worker.c -Wall -fsanitize=address -fno-omit-frame-pointer
