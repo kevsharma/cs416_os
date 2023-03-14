@@ -331,7 +331,7 @@ void schedule() {
 
 		running = dequeue(q_scheduled);
 		printf("DEBUG[schedule 5]: dequeued %d\n", running->thread_id);
-		printf("DEBUG[schedule 6]: dequeued uctx: %d\n", running->uctx);
+		//printf("DEBUG[schedule 6]: dequeued uctx: %d\n", running->uctx);
 
 		swapcontext(scheduler, running->uctx);
 	}
@@ -552,6 +552,7 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
 
     mutex->holder_tid = running->thread_id;
     // unblock signals - finished accessing shared resource
+	return 0;
 }
 
 /* release the mutex lock */
@@ -585,6 +586,7 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 		ptr = ptr->next;
 	}
     // unblock signals
+	return 0;
 }
 
 /* 0 = success. -1 = no such mutex. */
