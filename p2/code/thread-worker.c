@@ -7,11 +7,24 @@
 #include <unistd.h>
 #include <assert.h>
 
+#define NONEXISTENT_THREAD 0
+#define MAIN_THREAD 1
+
+#define INITIAL_MUTEX 0 /* All mutex_num values are unsigned integers. 0 implies mutex_list init-d first time.*/
+#define NOT_HELD_BY_ANY_THREAD 0 /* Valid thread_ids start with 1 (main) and are unsigned ints which are not 0.*/
+
+
 typedef unsigned int worker_t;
 typedef unsigned int mutex_num;
 
+/* mutex struct definition */
+typedef struct worker_mutex_t {
+	mutex_num lock_num;
+	worker_t holder_tid;
+} worker_mutex_t;
+
 typedef struct TCB {
-	unsigned int 	thread_id;
+	worker_t 		thread_id;
 	ucontext_t 		*uctx; 
 	worker_t		join_tid;
 	void **			join_retval;
@@ -34,6 +47,16 @@ typedef struct List {
     unsigned short size;
     struct Node *front;
 } List;
+
+typedef struct mutex_node {
+    worker_mutex_t *data;
+    struct mutex_node *next;
+} mutex_node;
+
+/* Singular Linked List */
+typedef struct mutex_list {
+    struct mutex_node *front;
+} mutex_list;
 
 
 int isUninitialized(Queue *q_ptr) {
@@ -191,7 +214,17 @@ void print_list(List *lst_ptr) {
     printf("\n");
 }
 
+void print_mutex_list(mutex_list *mutexes) {
+    mutex_node *ptr = mutexes->front;
+    printf("Printing lst: \n");
+    
+    while(ptr) {
+        printf("%d held by %d.\n", ptr->data->lock_num, ptr->data->holder_tid);
+        ptr = ptr->next;
+    }
 
+    printf("\n");
+}
 
 // INITAILIZE ALL YOUR OTHER VARIABLES HERE
 ////////////////////////////////////////////////////////////////////////////////////////////
@@ -203,6 +236,10 @@ static ucontext_t *scheduler; // In a repeat loop in schedule();
 static ucontext_t *cleanup; // Cleans up after a worker thread ends. Workers' uc_link points to this;
 
 static tcb *running; // Currently executing thread; CANNOT BE SCHEDULER, CLEANUP;
+static mutex_list *mutexes; // list of (mutex_num, holder_tid) for currently init-d mutexes.
+
+static worker_t *last_created_worker_tid;
+static mutex_num *current_mutex_num;
 ////////////////////////////////////////////////////////////////////////////////////////////
 
 void init_queues() {
@@ -234,7 +271,7 @@ void deinit_queues() {
 }
 
 void deinit_list() {
-	assert(tcbs->size <= 1); // Only main running.
+	assert(tcbs->size <= 1); /* Only the main context within list */
 	free(tcbs);
 	tcbs = NULL;
 }
@@ -282,8 +319,7 @@ void alert_waiting_threads(worker_t ended, void *ended_retval_ptr) {
 	// Notify all threads who called worker_join(ended, retval).
 	while(!ptr) {
 		if (ptr->data->join_tid == ended) {
-			// No longer waiting on any thread.
-			ptr->data->join_tid = 0;
+			ptr->data->join_tid = NONEXISTENT_THREAD; // No longer waiting.
 
 			// Save data from exiting thread.
 			if (ended_retval_ptr != NULL) {
@@ -307,7 +343,7 @@ void perform_cleanup() {
 		remove_from(tcbs, tid_ended);
 
 		// Allocated Heap space for TCB and TCB->uctx and TCB->uctx->uc_stack base ptr
-		if (tid_ended != 1) {
+		if (tid_ended != MAIN_THREAD) {
 			/* main context's stack was not allocated. */
 			free(running->uctx->uc_stack.ss_sp); // Free the worker's stack
 		}
@@ -316,6 +352,12 @@ void perform_cleanup() {
 		running = NULL; // IMPORTANT FLAG (see scheduler while guard)
 		swapcontext(cleanup, scheduler);
 	}
+
+	// free supporting memory allocated mechanisms.
+	printf("\nINFO[cleanup context]: frees supporting mechanisms\n");
+	free(last_created_worker_tid);
+	free(current_mutex_num);
+	free(mutexes);
 
 	printf("\nINFO[cleanup context]: frees initiated of scheduler and cleanup contexts\n");
 	// Scheduler done too.
@@ -326,40 +368,55 @@ void perform_cleanup() {
 	scheduler = cleanup = NULL;
 }
 
+void init_library() {
+	// Initialize supporting mechanisms.
+	init_queues();
+	init_list();
+
+	printf("INFO[worker_create]: printing arrival: \t\t");
+	print_queue(q_arrival);
+	printf("INFO[worker_create]: printing scheduled: \t");
+	print_queue(q_scheduled);
+
+	// Scheduler and Cleanup should be referenced from any context (hence heap).
+	scheduler = (ucontext_t *) malloc(sizeof(ucontext_t));
+	cleanup = (ucontext_t *) malloc(sizeof(ucontext_t));
+
+	// Create scheduler context
+	getcontext(scheduler);
+	scheduler->uc_link = cleanup;
+	scheduler->uc_stack.ss_size = 4096;
+	scheduler->uc_stack.ss_sp = malloc(4096);
+	makecontext(scheduler, schedule, 0);
+
+	// Create cleanup context
+	getcontext(cleanup);
+	cleanup->uc_link = NULL;
+	cleanup->uc_stack.ss_size = 4096;
+	cleanup->uc_stack.ss_sp = malloc(4096);
+	makecontext(cleanup, perform_cleanup, 0);
+
+	// worker_create should get a monotonically increasing worker_t tid.
+	last_created_worker_tid = (worker_t *) malloc(sizeof(worker_t));
+	*last_created_worker_tid = MAIN_THREAD;
+
+	// mutexes should not overlap - also monotonically increasing.
+	current_mutex_num = (mutex_num *) malloc(sizeof(mutex_num));
+	*current_mutex_num = INITIAL_MUTEX;
+	mutexes = (mutex_list *) malloc(sizeof(mutex_list));
+}
+
 int worker_create(worker_t * thread, pthread_attr_t * attr, void
     *(*function)(void*), void * arg)
 {
 	if (!scheduler) {
-		// First time library called.
-		init_queues();
-		init_list();
-		printf("INFO[worker_create]: printing arrival: \t\t");
-		print_queue(q_arrival);
-		printf("INFO[worker_create]: printing scheduled: \t");
-		print_queue(q_scheduled);
-
-		// Scheduler and Cleanup should be contacted from anywhere
-		scheduler = (ucontext_t *) malloc(sizeof(ucontext_t));
-		cleanup = (ucontext_t *) malloc(sizeof(ucontext_t));
-
-		// Create Scheduler
-		getcontext(scheduler);
-		scheduler->uc_link = cleanup;
-		scheduler->uc_stack.ss_size = 4096;
-		scheduler->uc_stack.ss_sp = malloc(4096);
-		makecontext(scheduler, schedule, 0);
-
-		// Create cleanup
-		getcontext(cleanup);
-		cleanup->uc_link = NULL;
-		cleanup->uc_stack.ss_size = 4096;
-		cleanup->uc_stack.ss_sp = malloc(4096);
-		makecontext(cleanup, perform_cleanup, 0);
+		// First time library called, hence initialize the library:
+		init_library();
 		
 		// Create tcb for main
 		running = (tcb *) malloc(sizeof(tcb));
 		running->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
-		running->thread_id = 1; // main first program
+		running->thread_id = MAIN_THREAD;
 		getcontext(running->uctx);
 		running->uctx->uc_link = cleanup;
 		
@@ -369,7 +426,7 @@ int worker_create(worker_t * thread, pthread_attr_t * attr, void
 	printf("INFO[worker_create]: created TCB for new worker\n");
 	// Create tcb for new_worker and put into q_arrival queue
 	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
-	new_tcb->thread_id = *thread; // thread id stored in tcb
+	new_tcb->thread_id = ++(*last_created_worker_tid); // thread id stored in tcb
 	
 	new_tcb->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
 	getcontext(new_tcb->uctx); // heap space stores context
@@ -407,6 +464,139 @@ int worker_join(worker_t thread, void **value_ptr) {
 	return swapcontext(running->uctx, scheduler);
 }
 
+
+int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t *mutexattr) {
+    // block signals (we will access shared mutex list).
+    assert(mutexes != NULL);
+
+    // Create mutex.
+    mutex = (worker_mutex_t *) malloc(sizeof(worker_mutex_t));
+    mutex->lock_num = ++(*current_mutex_num); // the next mutex_num.
+    mutex->holder_tid = NOT_HELD_BY_ANY_THREAD;
+
+    // Insert created mutex
+    mutex_node *mutex_item = (mutex_node *) malloc(sizeof(mutex_node));
+    mutex_item->data = mutex;
+    mutex_item->next = mutexes->front;
+    mutexes->front = mutex_item;
+
+    // unblock signals.
+    return 0;
+}
+
+/* aquire the mutex lock */
+int worker_mutex_lock(worker_mutex_t *mutex) {
+    // block signals - accesses shared resource mutex.
+
+    /**
+     * The thread is blocked from returning from this function
+     * until it can succesfully acquire the lock.
+     * 
+     * Note that when the lock is released, it is not necessary
+     * that this thread acquires the lock. Therefore, we must reset
+     * the seeking_lock attribute to the desired lock.
+     * 
+     * The Scheduler will not schedule any thread that is waiting
+     * on another thread to release a lock. Suppose A holds mutex m,
+     * and B and C wish to acquire mutex m. When A releases, B and C's 
+     * seeking_lock is reset such that they are no longer waiting.
+     * - If B is scheduled after A releases the lock, then B
+     * acquires the lock. When B is preempted and C is scheduled (for example),
+     * then C will find that B still holds the lock and will set it's 
+     * seeking_lock to waiting for m again.
+     * - After B releases, there is no more race and C can acquire the 
+     * lock after it is scheduled.
+     * 
+     * The scheduler skips any thread waiting, but because A's relinquishing
+     * of the lock triggered a cycle through the tcb list to clear out every
+     * thread's seeking variable (if and only if that thread was seeking m), 
+     * then the scheduler can then schedule B and C. The reasoning behind
+     * this is that there is no point to schedule B or C until A gives up
+     * the lock since B or C can make no meaningful progress into the 
+     * critical section anyway.
+    */
+    while(mutex->holder_tid != NOT_HELD_BY_ANY_THREAD) {
+        running->seeking_lock = mutex->lock_num;
+        swapcontext(running->uctx, scheduler);
+    }
+
+    mutex->holder_tid = running->thread_id;
+    // unblock signals - finished accessing shared resource
+}
+
+/* release the mutex lock */
+int worker_mutex_unlock(worker_mutex_t *mutex) {
+    // block signals
+    /**
+     * Once a thread relinquishes the lock, there may
+     * still exist a group of threads waiting to acquire
+     * that lock. The scheduler would have skipped those
+     * threads.
+     * 
+     * In order to give one of these a chance to acquire the lock,
+     * (to let the Scheduler schedule one thread among the group),
+     * we change their tcb state s.t. it reflects that they should
+     * not be skipped. Note that, the first thread from that group
+     * waiting on the mutex this thread relinquished will gain
+     * control over the lock. The remainder, if scheduled before the new
+     * thread gives up the lock, will go back into a waiting state
+     * by changing their seeking_lock. 
+     * 
+     * (See worker_mutex_lock for more details.)
+    */
+    mutex->holder_tid = NOT_HELD_BY_ANY_THREAD; 
+
+    Node *ptr = tcbs->front;
+	while(!ptr) {
+        // If a thread is waiting on the unlocked mutex, change its state
+        // so that Scheduler will not skip it anymore.
+        if (ptr->data->seeking_lock == mutex->lock_num) {
+            ptr->data->seeking_lock = NOT_HELD_BY_ANY_THREAD;
+        }
+
+		ptr = ptr->next;
+	}
+    // unblock signals
+}
+
+/* 0 = success. -1 = no such mutex. */
+int worker_mutex_destroy(worker_mutex_t *mutex) {
+    // block signals - accessing shared resources.
+    // Ensure mutexes is not empty.
+    assert(!mutexes);
+    assert(!(mutexes->front));
+
+    mutex_num target_lock_num = mutex->lock_num;
+    
+    if (mutexes->front->data->lock_num == target_lock_num) {
+        mutex_node *match = mutexes->front;
+        mutexes->front = mutexes->front->next;
+        free(match->data);
+        free(match);
+        return 0;
+    }
+
+    // Guaranteed to have at least two nodes.
+
+    mutex_node *ptr = mutexes->front->next;
+    mutex_node *prev = mutexes->front;
+
+    for(; !ptr; prev = prev->next, ptr = ptr->next) {
+        if(ptr->data->lock_num != target_lock_num) {
+            continue;
+        }
+
+        prev->next = ptr->next;
+        free(ptr->data);
+        free(ptr);
+        return 0;
+    }
+
+    // Lock not found.
+    // unblock signals
+    return -1;
+}
+
 //////////////////////////////////////////
 
 void* func_bar(void *) {
@@ -436,55 +626,3 @@ int main(int argc, char **argv) {
 
 
 // gcc -o thread-worker thread-worker.c -Wall -fsanitize=address -fno-omit-frame-pointer
-
-/**
- * maintain list of all TCBs-> this is used to search for waiting by worker_exit.
- * tcb gets two more attirbutes, join_tid; join_retval;
- * 
- * function join(thread_end, retval*) {
- * 		running->join_tid-> = thead_end;
- * 		// retval will be populated when the thread_end calls worker_exit(value);
- * 		swapcontext(running->uctx, scheduler);
- * 
- * 		// exit called by join_tid would have stored the retval in tcb struct
- * 		if retval != NULL:		
- * 			retval* = running->join_retval;
- * }
- * 
- * function worker_exit(void *value_ptr) {
- * 		if value_ptr != NULL:
- * 			// cycle through tcb list to find any waiting on this thread, and change their retval
- * 			for tcb in tcb list:
- * 				if tcb->join_tid -> running->thread_id:
- * 					tcb->join_retval = value_ptr;
- * 
- * 		// because of uc_link -> cleanup gets passed control and cleans the list.
- * 		// cleanup is also responsible for ensuring that all tids waiting on running tid set to 0
- * }
- * 
- * function worker_yield(void *value_ptr) {
- * 		swapcontext(running->uctx, scheduler);
- * }
- *
- * 
- * ToDo 
- * 0. Verify that threads explicityly call exit (examples)
- * 0. Waitlist is a list of structs. -> Change design to incorporate tcb waiting_list
- * 
- * 1. list structure for TCBs (searchable, insert, delete)
- * 2. tcb modify to add two new attributes: worker_t join_tid (initited to -1), void *join_retval
- * 
- * Control Flow Ramificatins:
- * 3. modify init to malloc space for the new variables
- * 4. malloc space for new list
- * 5. cleanup() fixes: 
- * 		- while (tcb list not empty) condition
- * 		- free newly malloc space
- * 		- free tcb list after completion of main
- * 
- * 6. worker_yield
- * 7. worker_exit
- * 8. worker_join
- * 
- * 
-*/

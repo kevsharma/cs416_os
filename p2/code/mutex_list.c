@@ -25,8 +25,8 @@ typedef struct mutex_list {
     struct mutex_node *front;
 } mutex_list;
 
-static mutex_num current_mutex_num;
-static mutex_list mutexes;
+static mutex_num *current_mutex_num;
+static mutex_list *mutexes;
 
 
 void print_mutex_list() {
@@ -48,7 +48,7 @@ int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t *mutexatt
 
     // Create mutex.
     mutex = (worker_mutex_t *) malloc(sizeof(worker_mutex));
-    mutex->lock_num = ++current_mutex_num; // the next mutex_num.
+    mutex->lock_num = ++(*current_mutex_num); // the next mutex_num.
     mutex->holder_tid = NOT_HELD_BY_ANY_THREAD;
 
     // Insert created mutex
