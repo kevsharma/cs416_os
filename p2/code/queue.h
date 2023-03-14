@@ -1,6 +1,5 @@
 #include "thread-worker.h"
 
-
 /* Circular Linked List */
 typedef struct Queue {
     unsigned short size;

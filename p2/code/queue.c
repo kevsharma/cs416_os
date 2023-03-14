@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <stdlib.h>
 #include "queue.h"
 
 int isUninitialized(Queue *q_ptr) {
