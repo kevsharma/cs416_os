@@ -97,10 +97,13 @@ int is_blocked(tcb *thread) {
 void alert_waiting_threads(worker_t ended, void *ended_retval_ptr) {
 	Node *ptr = tcbs->front;
 
+	printf("[ALERT]: %d ended and alerting\n", ended);
+	exit;
 	// Notify all threads who called worker_join(ended, retval).
 	while(!ptr) {
 		if (ptr->data->join_tid == ended) {
 			ptr->data->join_tid = NONEXISTENT_THREAD; // No longer waiting.
+			printf("\n\n[ALERT]: %d alerted that %d ended.\n\n", ptr->data->join_tid, running->thread_id);
 
 			// Save data from exiting thread.
 			if (ended_retval_ptr != NULL) {
@@ -144,6 +147,8 @@ void round_robin_scheduler() {
 
 		} while(is_blocked(running));
 		
+		printf("after descheduling: ");
+		print_queue(q_scheduled);
 		printf("INFO[schedule 5]: Scheduling tid (%d)\n", running->thread_id);
 		/**
 		 * Only start timer IFF tcb's list size is greater than 1 (> 1).
@@ -256,8 +261,7 @@ void init_library() {
 
 }
 
-int worker_create(worker_t * thread, pthread_attr_t * attr, void
-    *(*function)(void*), void * arg)
+int worker_create(worker_t * thread, void*(*function)(void*), void * arg)
 {
 	// block signals - accessing shared resource: tcb list and queues.
 	if (!scheduler) {
@@ -320,7 +324,7 @@ int worker_join(worker_t thread, void **value_ptr) {
 	return swapcontext(running->uctx, scheduler);
 }
 
-int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t *mutexattr) {
+int worker_mutex_init(worker_mutex_t *mutex) {
     // block signals (we will access shared mutex list).
     assert(mutexes != NULL);
 
@@ -455,16 +459,26 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 //////////////////////////////////////////
 
 void* func_bar(void *) {
-	printf("WORKER %d: func_bar started\n", running->thread_id);
-	printf("WORKER %d: func_bar ended\n", running->thread_id);
+	printf("WORKER %d: func_bar ran\n", running->thread_id);
+	swapcontext(running->uctx, scheduler);
+	printf("WORKER %d: func_bar ran again\n", running->thread_id);
 	return NULL;
 }
 
 int main(int argc, char **argv) {
 	printf("MAIN: Starting main: no queues running yet\n");
 
-	worker_t worker_1 = 17;
-	worker_create(&worker_1, NULL, (void *) &func_bar, NULL);
+	worker_t worker_1;
+	//worker_t worker_2;
+	worker_create(&worker_1, (void *) &func_bar, NULL);
+	//worker_create(&worker_2, (void *) &func_bar, NULL);
+
+	printf("MAIN: before joining 1\n");
+
+	//worker_create(&worker_3, NULL, (void *) &func_bar, NULL);
+	worker_join(worker_1, NULL);
+	//worker_join(worker_2, NULL);
+	//worker_join(worker_3, NULL);
 
 	/*
 	worker_t worker_2 = 38;

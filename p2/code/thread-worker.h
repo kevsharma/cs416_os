@@ -53,8 +53,7 @@ typedef struct mutex_list {
 /* Function Declarations: */
 
 /* create a new thread */
-int worker_create(worker_t * thread, pthread_attr_t * attr, void
-    *(*function)(void*), void * arg);
+int worker_create(worker_t * thread, void*(*function)(void*), void * arg);
 
 /* give CPU pocession to other user level worker threads voluntarily */
 int worker_yield();
@@ -66,8 +65,7 @@ void worker_exit(void *value_ptr);
 int worker_join(worker_t thread, void **value_ptr);
 
 /* initial the mutex lock */
-int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t
-    *mutexattr);
+int worker_mutex_init(worker_mutex_t *mutex);
 
 /* aquire the mutex lock */
 int worker_mutex_lock(worker_mutex_t *mutex);
