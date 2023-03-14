@@ -460,7 +460,7 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 
 void* func_bar(void *) {
 	printf("WORKER %d: func_bar ran\n", running->thread_id);
-	swapcontext(running->uctx, scheduler);
+	//swapcontext(running->uctx, scheduler);
 	printf("WORKER %d: func_bar ran again\n", running->thread_id);
 	return NULL;
 }
@@ -489,7 +489,4 @@ int main(int argc, char **argv) {
 	*/
 
 	printf("MAIN: Ending main\n");
-	// ITS TIME TO REPLACE THIS WITH JOIN
-	//setcontext(cleanup);
-	// let main naturally flow control to scheduler upon calling join.
 }
