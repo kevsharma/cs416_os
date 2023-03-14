@@ -39,18 +39,6 @@
 */
 #define NONEXISTENT_MUTEX 0
 
-
-typedef struct mutex_node {
-    worker_mutex_t *data;
-    struct mutex_node *next;
-} mutex_node;
-
-/* Singular Linked List */
-typedef struct mutex_list {
-    struct mutex_node *front;
-} mutex_list;
-
-
 // INITAILIZE ALL YOUR OTHER VARIABLES HERE
 ////////////////////////////////////////////////////////////////////////////////////////////
 static Queue *q_arrival;
@@ -92,7 +80,7 @@ void print_mutex_list(mutex_list *mutexes) {
 /* Registered with atexit() upon library's first use invocation. */
 void cleanup_library() {
 	/* Remove main from scheduled queue and tcbs list.*/
-	running = dequeue(q_scheduled);	// Empties scheduled list since last thread.
+	// main already removed lol //running = dequeue(q_scheduled);	// Empties scheduled list since last thread.
 	remove_from(tcbs, MAIN_THREAD); // Empties tcbs list since last thread.
 	free(running->uctx);
 	free(running);

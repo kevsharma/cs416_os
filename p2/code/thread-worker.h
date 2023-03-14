@@ -40,6 +40,16 @@ typedef struct Queue {
     struct Node *rear;
 } Queue;
 
+typedef struct mutex_node {
+    worker_mutex_t *data;
+    struct mutex_node *next;
+} mutex_node;
+
+/* Singular Linked List */
+typedef struct mutex_list {
+    struct mutex_node *front;
+} mutex_list;
+
 /* Function Declarations: */
 
 /* create a new thread */
