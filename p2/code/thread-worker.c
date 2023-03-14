@@ -1,8 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "thread-worker.h"
-#include "queue.h"
-#include "list.h"
+#include "support.h"
 
 /**
  * When the library is first used, this calling context populates
@@ -42,6 +40,17 @@
 #define NONEXISTENT_MUTEX 0
 
 
+typedef struct mutex_node {
+    worker_mutex_t *data;
+    struct mutex_node *next;
+} mutex_node;
+
+/* Singular Linked List */
+typedef struct mutex_list {
+    struct mutex_node *front;
+} mutex_list;
+
+
 // INITAILIZE ALL YOUR OTHER VARIABLES HERE
 ////////////////////////////////////////////////////////////////////////////////////////////
 static Queue *q_arrival;
@@ -57,6 +66,7 @@ static mutex_list *mutexes; // list of (mutex_num, holder_tid) for currently ini
 static worker_t *last_created_worker_tid;
 static mutex_num *current_mutex_num;
 ////////////////////////////////////////////////////////////////////////////////////////////
+
 void print_mutex_list(mutex_list *mutexes) {
     mutex_node *ptr = mutexes->front;
     printf("Printing lst: \n");
@@ -447,7 +457,7 @@ int main(int argc, char **argv) {
 	*/
 
 	printf("MAIN: Ending main\n");
-	// setcontext(cleanup);
+	setcontext(cleanup);
 	// let main naturally flow control to scheduler upon calling join.
 }
 

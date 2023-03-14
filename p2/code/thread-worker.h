@@ -28,16 +28,17 @@ typedef struct Node {
     struct Node *next;
 } Node;
 
-typedef struct mutex_node {
-    worker_mutex_t *data;
-    struct mutex_node *next;
-} mutex_node;
-
 /* Singular Linked List */
-typedef struct mutex_list {
-    struct mutex_node *front;
-} mutex_list;
+typedef struct List {
+    unsigned short size;
+    struct Node *front;
+} List;
 
+/* Circular Linked List */
+typedef struct Queue {
+    unsigned short size;
+    struct Node *rear;
+} Queue;
 
 /* Function Declarations: */
 

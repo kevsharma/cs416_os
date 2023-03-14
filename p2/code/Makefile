@@ -1,11 +1,13 @@
 CC = gcc
-CFLAGS = -g -std=c99 -Wvla -Wall # -pthread -fsanitize=address,undefined
+CFLAGS = -Wall
+LDFLAGS =
+OBJFILES = support.o thread-worker.o
+TARGET = thread-worker
 
-all: thread-worker
+all: $(TARGET)
 
-thread-worker: thread-worker.c
-	gcc -o thread-worker thread-worker.c
-
+$(TARGET): $(OBJFILES)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJFILES) $(LDFLAGS)
 
 clean:
-	rm thread-worker *.o *.a
+	rm -f $(OBJFILES) $(TARGET) *~
