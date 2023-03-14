@@ -8,12 +8,14 @@
 #include <assert.h>
 
 typedef unsigned int worker_t;
+typedef unsigned int mutex_num;
 
 typedef struct TCB {
 	unsigned int 	thread_id;
 	ucontext_t 		*uctx; 
 	worker_t		join_tid;
 	void **			join_retval;
+	mutex_num		seeking_lock;
 } tcb; 
 
 typedef struct Node {
