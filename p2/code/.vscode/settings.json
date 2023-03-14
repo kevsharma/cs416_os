@@ -1,0 +1,17 @@
+{
+    "files.associations": {
+        "thread-worker.h": "c",
+        "array": "c",
+        "string_view": "c",
+        "initializer_list": "c",
+        "utility": "c",
+        "deque": "c",
+        "vector": "c",
+        "string": "c",
+        "ratio": "c",
+        "system_error": "c",
+        "functional": "c",
+        "tuple": "c",
+        "type_traits": "c"
+    }
+}

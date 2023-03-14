@@ -1,49 +1,42 @@
-// File:	worker_t.h
-
-// List all group member's name:
-// username of iLab:
-// iLab Server:
-
-#ifndef WORKER_T_H
-#define WORKER_T_H
-
-#define _GNU_SOURCE
-
-/* To use Linux pthread Library in Benchmark, you have to comment the USE_WORKERS macro */
-#define USE_WORKERS 1
-
-/* include lib header files that you need here: */
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ucontext.h>
+#include <assert.h>
 
-typedef uint worker_t;
-
-typedef struct TCB {
-	/* add important states in a thread control block */
-	// thread Id
-	// thread status
-	// thread context
-	// thread stack
-	// thread priority
-	// And more ...
-
-	// YOUR CODE HERE
-} tcb; 
+typedef unsigned int worker_t;
+typedef unsigned int mutex_num;
 
 /* mutex struct definition */
 typedef struct worker_mutex_t {
-	/* add something here */
-
-	// YOUR CODE HERE
+	mutex_num lock_num;
+	worker_t holder_tid;
 } worker_mutex_t;
 
-/* define your data structures here: */
-// Feel free to add your own auxiliary data structures (linked list or queue etc...)
+typedef struct TCB {
+	worker_t 		thread_id;
+	ucontext_t 		*uctx; 
+	worker_t		join_tid;		/* NONEXISTENT_THREAD if not currently waiting on another thread. */
+	void **			join_retval;	
+	mutex_num		seeking_lock;	/* NONEXISTENT_MUTEX if not seeking to acquire a mutex. */
+} tcb; 
 
-// YOUR CODE HERE
+typedef struct Node {
+    tcb *data;
+    struct Node *next;
+} Node;
+
+typedef struct mutex_node {
+    worker_mutex_t *data;
+    struct mutex_node *next;
+} mutex_node;
+
+/* Singular Linked List */
+typedef struct mutex_list {
+    struct mutex_node *front;
+} mutex_list;
 
 
 /* Function Declarations: */
@@ -73,21 +66,3 @@ int worker_mutex_unlock(worker_mutex_t *mutex);
 
 /* destroy the mutex */
 int worker_mutex_destroy(worker_mutex_t *mutex);
-
-
-/* Function to print global statistics. Do not modify this function.*/
-void print_app_stats(void);
-
-#ifdef USE_WORKERS
-#define pthread_t worker_t
-#define pthread_mutex_t worker_mutex_t
-#define pthread_create worker_create
-#define pthread_exit worker_exit
-#define pthread_join worker_join
-#define pthread_mutex_init worker_mutex_init
-#define pthread_mutex_lock worker_mutex_lock
-#define pthread_mutex_unlock worker_mutex_unlock
-#define pthread_mutex_destroy worker_mutex_destroy
-#endif
-
-#endif
