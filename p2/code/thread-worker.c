@@ -569,7 +569,7 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
      * not be skipped. Note that, the first thread from that group
      * waiting on the mutex this thread relinquished will gain
      * control over the lock. The remainder, if scheduled before the new
-     * thread gives up the lock, will go back into a waiting state
+     * acquirer gives up the lock, will go back into a waiting state
      * by changing their seeking_lock. 
      * 
      * (See worker_mutex_lock for more details.)
@@ -578,8 +578,6 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 
     Node *ptr = tcbs->front;
 	while(!ptr) {
-        // If a thread is waiting on the unlocked mutex, change its state
-        // so that Scheduler will not skip it anymore.
         if (ptr->data->seeking_lock == mutex->lock_num) {
 			ptr->data->seeking_lock = NONEXISTENT_MUTEX;
         }
