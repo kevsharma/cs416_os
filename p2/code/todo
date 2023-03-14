@@ -33,4 +33,4 @@ Then proceed:
     - test4: main spawns two threads, both compete for locks, main joins both.
 
 = Note that some bugs may only be uncovered after preemption is uncovered.
-    - That is why a logical overview will require careful logical scrutiny.
+    - That is why a logical overview will require careful logical scrutiny

@@ -3,6 +3,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+#define INITIAL_MUTEX 0 /* All mutex_num values are unsigned integers. 0 implies mutex_list init-d first time.*/
+#define NOT_HELD_BY_ANY_THREAD 0 /* Valid thread_ids start with 1 (main) and are unsigned ints which are not 0.*/
 
 typedef unsigned int worker_t;
 typedef unsigned int mutex_num;
@@ -26,10 +28,6 @@ typedef struct mutex_list {
 static mutex_num current_mutex_num;
 static mutex_list mutexes;
 
-void get_mutex_num() {
-	return ++current_mutex_num;
-}
-
 
 void print_mutex_list() {
     mutex_node *ptr = mutexes->front;
@@ -44,17 +42,14 @@ void print_mutex_list() {
 }
 
 
-/* initial the mutex lock */
-int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t
-    *mutexattr) 
-{
+int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t *mutexattr) {
     // block signals (we will access shared mutex list).
     assert(mutexes != NULL);
 
     // Create mutex.
     mutex = (worker_mutex_t *) malloc(sizeof(worker_mutex));
-    mutex->lock_num = get_mutex_num();
-    mutex->holder_thread_id = 0; // no such thread.
+    mutex->lock_num = ++current_mutex_num; // the next mutex_num.
+    mutex->holder_tid = NOT_HELD_BY_ANY_THREAD;
 
     // Insert created mutex
     mutex_node *mutex_item = (mutex_node *) malloc(sizeof(mutex_node));
@@ -97,7 +92,7 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
      * the lock since B or C can make no meaningful progress into the 
      * critical section anyway.
     */
-    while(mutex->holder_tid != 0) {
+    while(mutex->holder_tid != NOT_HELD_BY_ANY_THREAD) {
         running->seeking_lock = mutex->lock_num;
         swapcontext(running->uctx, scheduler);
     }
@@ -126,12 +121,14 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
      * 
      * (See worker_mutex_lock for more details.)
     */
-    mutex->holder_tid = 0; 
+    mutex->holder_tid = NOT_HELD_BY_ANY_THREAD; 
 
     Node *ptr = tcbs->front;
 	while(!ptr) {
+        // If a thread is waiting on the unlocked mutex, change its state
+        // so that Scheduler will not skip it anymore.
         if (ptr->data->seeking_lock == mutex->lock_num) {
-            ptr->data->seeking_lock = 0;
+            ptr->data->seeking_lock = NOT_HELD_BY_ANY_THREAD;
         }
 
 		ptr = ptr->next;
@@ -149,15 +146,17 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
     mutex_num target_lock_num = mutex->lock_num;
     
     if (mutexes->front->data->lock_num == target_lock_num) {
-        mutex_node *match = front;
-        mutexes->front = front->next;
+        mutex_node *match = mutexes->front;
+        mutexes->front = mutexes->front->next;
         free(match->data);
         free(match);
         return 0;
     }
 
-    mutex_node *ptr = front->next;
-    mutex_node *prev = front;
+    // Guaranteed to have at least two nodes.
+
+    mutex_node *ptr = mutexes->front->next;
+    mutex_node *prev = mutexes->front;
 
     for(; !ptr; prev = prev->next, ptr = ptr->next) {
         if(ptr->data->lock_num != target_lock_num) {
@@ -173,13 +172,4 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
     // Lock not found.
     // unblock signals
     return -1;
-}
-
-
-
-int main() {
-    // initialize the list
-    mutexes = (mutex_list *) malloc(sizeof(mutex_list));
-    
-    // make sure pass by value doesn't kick our butt.
 }
