@@ -7,12 +7,42 @@
 #include <unistd.h>
 #include <assert.h>
 
-#define NONEXISTENT_THREAD 0
+/**
+ * When the library is first used, this calling context populates
+ * the running tcb struct's thread_id attribute with MAIN_THREAD.
+*/
 #define MAIN_THREAD 1
 
-#define INITIAL_MUTEX 0 /* All mutex_num values are unsigned integers. 0 implies mutex_list init-d first time.*/
-#define NOT_HELD_BY_ANY_THREAD 0 /* Valid thread_ids start with 1 (main) and are unsigned ints which are not 0.*/
+/**
+ * Thread identifiers start with 1 for the main thread and are assigned
+ * monotinically increasing integers upon creation of a new thread.
+ * 
+ * The NONEXISTENT_THREAD definition is used in two places, both of which
+ * have considerable ramifications for scheduling logic and thus is
+ * imperative to get right:
+ * 	1. tcb's join_tid attribute: here, the def. is used to indicate that
+ * 								the thread is not waiting for another's completion.
+ *  2. mutex list's worker_mutex_t: here, the def. is used to indiciate that 
+ * 								no thread holds has acquired the associated mutex.
+ */
+#define NONEXISTENT_THREAD 0 
 
+/**
+ * Mutex numbers are monotonically increasing integers starting with 1.
+ * If a mutex number is zero and stored within a tcb's seeking_lock, there
+ * are ramifications for scheduling for that thread. See more below.
+*/
+#define INITIAL_MUTEX 1 
+
+/**
+ * NONEXISTENT_MUTEX is used within seeking_lock attribute of TCB
+ * to indicate that a thread is not waiting to acquire any lock.
+ * 
+ * The seeking_lock attribute of a tcb is used by the scheduler to indicate
+ * whether the thread should be skipped in light of the thread waiting
+ * for another thread to unlock a mutex.
+*/
+#define NONEXISTENT_MUTEX 0
 
 typedef unsigned int worker_t;
 typedef unsigned int mutex_num;
@@ -26,9 +56,9 @@ typedef struct worker_mutex_t {
 typedef struct TCB {
 	worker_t 		thread_id;
 	ucontext_t 		*uctx; 
-	worker_t		join_tid;
-	void **			join_retval;
-	mutex_num		seeking_lock;
+	worker_t		join_tid;		/* NONEXISTENT_THREAD if not currently waiting on another thread. */
+	void **			join_retval;	
+	mutex_num		seeking_lock;	/* NONEXISTENT_MUTEX if not seeking to acquire a mutex. */
 } tcb; 
 
 typedef struct Node {
@@ -471,8 +501,8 @@ int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t *mutexatt
 
     // Create mutex.
     mutex = (worker_mutex_t *) malloc(sizeof(worker_mutex_t));
-    mutex->lock_num = ++(*current_mutex_num); // the next mutex_num.
-    mutex->holder_tid = NOT_HELD_BY_ANY_THREAD;
+    mutex->lock_num = (*current_mutex_num)++;
+    mutex->holder_tid = NONEXISTENT_THREAD;
 
     // Insert created mutex
     mutex_node *mutex_item = (mutex_node *) malloc(sizeof(mutex_node));
@@ -515,7 +545,7 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
      * the lock since B or C can make no meaningful progress into the 
      * critical section anyway.
     */
-    while(mutex->holder_tid != NOT_HELD_BY_ANY_THREAD) {
+    while(mutex->holder_tid != NONEXISTENT_THREAD) {
         running->seeking_lock = mutex->lock_num;
         swapcontext(running->uctx, scheduler);
     }
@@ -544,14 +574,14 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
      * 
      * (See worker_mutex_lock for more details.)
     */
-    mutex->holder_tid = NOT_HELD_BY_ANY_THREAD; 
+    mutex->holder_tid = NONEXISTENT_THREAD; 
 
     Node *ptr = tcbs->front;
 	while(!ptr) {
         // If a thread is waiting on the unlocked mutex, change its state
         // so that Scheduler will not skip it anymore.
         if (ptr->data->seeking_lock == mutex->lock_num) {
-            ptr->data->seeking_lock = NOT_HELD_BY_ANY_THREAD;
+			ptr->data->seeking_lock = NONEXISTENT_MUTEX;
         }
 
 		ptr = ptr->next;
