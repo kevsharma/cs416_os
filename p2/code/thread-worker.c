@@ -396,7 +396,7 @@ void cleanup_library() {
 	remove_from(tcbs, MAIN_THREAD); // Empties tcbs list since last thread.
 	free(running->uctx);
 	free(running);
-
+	
 	/* Free all allocated library mechanisms. */
 	assert(isEmpty(q_arrival));
 	free(q_arrival);
@@ -499,8 +499,7 @@ int worker_create(worker_t * thread, void*(*function)(void*), void * arg)
 		running->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
 		running->thread_id = MAIN_THREAD;
 		getcontext(running->uctx);
-		running->uctx->uc_link = cleanup;
-		
+
 		insert(tcbs, running);
 	}
 
