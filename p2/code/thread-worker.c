@@ -482,6 +482,14 @@ void init_library() {
 	*current_mutex_num = INITIAL_MUTEX;
 	mutexes = (mutex_list *) malloc(sizeof(mutex_list));
 
+	// Create tcb for main
+	running = (tcb *) malloc(sizeof(tcb));
+	running->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
+	running->thread_id = MAIN_THREAD;
+	getcontext(running->uctx);
+
+	insert(tcbs, running);
+
 	// Register atexit() function to clean up supporting mechanisms.
 	if (atexit(cleanup_library) != 0) {
 		printf("Will be unable to free user level threads library mechanisms.\n");
@@ -491,17 +499,8 @@ void init_library() {
 int worker_create(worker_t * thread, void*(*function)(void*), void * arg)
 {
 	// block signals - accessing shared resource: tcb list and queues.
-	if (!scheduler) {
-		// First time library called, hence initialize the library:
+	if (!scheduler) { // first time library called:
 		init_library();
-		
-		// Create tcb for main
-		running = (tcb *) malloc(sizeof(tcb));
-		running->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
-		running->thread_id = MAIN_THREAD;
-		getcontext(running->uctx);
-
-		insert(tcbs, running);
 	}
 
 	// Create tcb for new_worker and put into q_arrival queue
@@ -570,7 +569,11 @@ int worker_join(worker_t child_thread, void **value_ptr) {
 
 int worker_mutex_init(worker_mutex_t *mutex) {
     // block signals (we will access shared mutex list).
-    assert(mutexes != NULL);
+	if (!scheduler) { // first time library called:
+		init_library();
+	}
+    
+	assert(mutexes != NULL);
 
     // Create mutex.
     mutex = (worker_mutex_t *) malloc(sizeof(worker_mutex_t));
@@ -702,6 +705,39 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 
 //////////////////////////////////////////
 
+worker_mutex_t mut1;
+
+void mtest0() {
+	worker_mutex_init(&mut1);
+	worker_mutex_destroy(&mut1);
+}
+
+void mtest_func1(void *) {
+	worker_yield();
+	worker_exit(NULL);
+}
+
+void mtest1() {
+	worker_mutex_init(&mut1);
+
+	worker_t worker_1;
+	worker_t worker_2;
+	
+	worker_create(&worker_1, (void *) &mtest_func1, NULL);
+	worker_create(&worker_2, (void *) &mtest_func1, NULL);
+	
+	worker_join(worker_1, NULL);
+	worker_join(worker_2, NULL);
+
+	worker_mutex_destroy(&mut1);
+}
+
+int main(int argc, char **argv) {
+	mtest0();
+}
+
+/* test1,2,3 test library functions. */
+
 void* test1_func(void *) {
 	printf("WORKER %d: func_bar ran\n", running->thread_id);
 	worker_yield();
@@ -782,9 +818,5 @@ void test3() {
 	assert(*result_1 == 69.420f);
 	assert(*result_2 == 69.420f);
 	assert(*result_3 == 69.420f);
-}
-
-int main(int argc, char **argv) {
-	test3();
 }
 
