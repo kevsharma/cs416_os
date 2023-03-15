@@ -720,7 +720,8 @@ void test1() {
 	worker_join(worker_2, NULL);
 }
 
-void* test2_func(int *x) {
+// Note that the function signature is different: void *(*function)(void*)
+void test2_func(int *x) {
 	printf("DEBUG[test2_func]: x holds value: %d\n", x);
 	*x = 1776;
 	worker_exit(x);
@@ -750,6 +751,6 @@ void test2() {
 }
 
 int main(int argc, char **argv) {
-	test2();
+	
 }
 

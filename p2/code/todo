@@ -1,11 +1,11 @@
 
-- Create a few test functions to ensure correctness:
+Create a few test functions to ensure correctness:
 
 passed    - test1: main spawns one child and waits for it to terminate. worker calls exit.
 passed    - test2: main spawns two children and each yield correctly.
 
-segf    - test3: test1 union (main needs to see the return value). worker calls exit.
-segf    - test4: main spawns two children and waits for both to end and verifies return vals.
+passed   - test3: test1 union (main needs to see the return value). worker calls exit.
+passed   - test4: main spawns two children and waits for both to end and verifies return vals.
 
 - After ensuring correctness of logical flow for Library functions, test mutual exclusion.
     - test1: main creates locks, uses it, and deletes it.
