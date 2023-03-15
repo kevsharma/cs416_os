@@ -751,6 +751,7 @@ void test2() {
 
 void test3_func(double *x) {
 	*x = 69.420f;
+	worker_yield();
 	worker_exit(x);
 }
 
