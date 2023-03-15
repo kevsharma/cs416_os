@@ -17,7 +17,8 @@ typedef struct worker_mutex_t {
 
 typedef struct TCB {
 	worker_t 		thread_id;
-	ucontext_t 		*uctx; 
+	ucontext_t 		*uctx;
+	void			*ret_value;
 	worker_t		join_tid;		/* NONEXISTENT_THREAD if not currently waiting on another thread. */
 	void **			join_retval;	
 	mutex_num		seeking_lock;	/* NONEXISTENT_MUTEX if not seeking to acquire a mutex. */
@@ -72,17 +73,17 @@ void insert(List *lst_ptr, tcb *data) {
     lst_ptr->front = item;
 }
 
-/* Returns 1 if the list contains the worker, else returns 0.*/
-int contains(List *lst_ptr, worker_t target) {
+/* Returns valid ptr if the list contains the worker, else returns NULL.*/
+tcb* contains(List *lst_ptr, worker_t target) {
     Node *ptr = lst_ptr->front;
     while(ptr) {
         if (ptr->data->thread_id == target) {
-            return 1;
+            return ptr->data;
         }
         ptr = ptr->next;
     }
 
-    return 0;
+    return NULL;
 }
 
 tcb* remove_from(List *lst_ptr, worker_t target) {
@@ -258,9 +259,8 @@ void print_mutex_list(mutex_list *mutexes) {
 
 // INITAILIZE ALL YOUR OTHER VARIABLES HERE
 ////////////////////////////////////////////////////////////////////////////////////////////
-static Queue *q_arrival;
-static Queue *q_scheduled;
-static List *tcbs;
+static Queue *q_arrival, *q_scheduled;
+static List *tcbs, *ended_tcbs;
 
 static ucontext_t *scheduler;
 /**
@@ -315,7 +315,7 @@ void alert_waiting_threads(worker_t ended, void *ended_retval_ptr) {
 	Node *ptr = tcbs->front;
 	print_list(tcbs);
 	printf("[ALERT]: %d ended and alerting\n", ended);
-	exit;
+
 	// Notify all threads who called worker_join(ended, retval).
 	while(ptr) {
 		printf("%d is waiting on %d\n", ptr->data->thread_id, ptr->data->join_tid);
@@ -382,19 +382,15 @@ void round_robin_scheduler() {
  */
 void clean_exited_worker_thread() {
 	while(1) {
-		worker_t tid_ended = running->thread_id;
-
+		tcb *ended_tcb = remove_from(tcbs, running->thread_id);
+		insert(ended_tcbs, ended_tcb);
+		
 		/* The following alert call is necessary if worker_thread forgot to call worker_exit().*/
-		alert_waiting_threads(tid_ended, NULL); // Never overwrite join return value. 
-		remove_from(tcbs, tid_ended);
-
-		// Allocated Heap space for TCB and TCB->uctx and TCB->uctx->uc_stack base ptr
-		free(running->uctx->uc_stack.ss_sp);
-		free(running->uctx);
-		free(running);
+		alert_waiting_threads(ended_tcb->thread_id, NULL); // Never overwrite join return value. 
+	
 		running = NULL; // IMPORTANT FLAG so scheduler doesn't enqueue cleaned thread.
-
-		printf("INFO[CLEANUP]: Cleaned running tid (%d)\n", tid_ended);
+		
+		printf("INFO[CLEANUP]: Cleaned ended tid: (%d)\n", ended_tcb->thread_id);
 		swapcontext(cleanup, scheduler);
 	}
 }
@@ -415,6 +411,19 @@ void cleanup_library() {
 
 	assert(isEmptyList(tcbs));
 	free(tcbs);
+
+	// free each tcb in ended_tcbs which preserves ended thread's retvals (join uses this).
+	while (ended_tcbs->front) {
+		tcb *temp = ended_tcbs->front->data;
+		ended_tcbs->front = ended_tcbs->front->next;
+		--(ended_tcbs->size);
+		free(temp->uctx->uc_stack.ss_sp);
+		free(temp->uctx);
+		free(temp);
+	}
+
+	assert(isEmptyList(ended_tcbs));
+	free(ended_tcbs);
 
 	free(last_created_worker_tid);
 	free(current_mutex_num);
@@ -444,6 +453,12 @@ void init_library() {
 	tcbs = (List *) malloc(sizeof(List));
 	tcbs->size = 0;
 	tcbs->front = NULL;
+
+	// Initialize the ended_tcbs list (used for joins)
+	assert(isUninitializedList(ended_tcbs));
+	ended_tcbs = (List *) malloc(sizeof(List));
+	ended_tcbs->size = 0;
+	ended_tcbs->front = NULL;
 
 	// Scheduler and Cleanup should be referenced from any context (hence heap).
 	scheduler = (ucontext_t *) malloc(sizeof(ucontext_t));
@@ -501,6 +516,7 @@ int worker_create(worker_t * thread, void*(*function)(void*), void * arg)
 	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
 	new_tcb->thread_id = ++(*last_created_worker_tid);
 	*thread = new_tcb->thread_id;
+	new_tcb->ret_value = NULL;
 	new_tcb->join_tid = NONEXISTENT_THREAD; // not waiting on any thread
 	new_tcb->join_retval = NULL;
 	new_tcb->seeking_lock = NONEXISTENT_MUTEX; // not waiting on any lock
@@ -531,17 +547,32 @@ int worker_yield() {
 /* terminate a thread */
 void worker_exit(void *value_ptr) {
 	// block signals - accessing shared tcb list in alert.
+	running->ret_value = value_ptr;
 	alert_waiting_threads(running->thread_id, value_ptr); 
 	// unblock signals - finished accessing shared tcb list. (redundent since context ends)
 	// Transfer then flows to cleanup context.
 }
 
 /* wait for thread termination */
-int worker_join(worker_t thread, void **value_ptr) {
-	printf("%d is going to wait on %d\n", running->thread_id, thread);
-	running->join_tid = thread;
-	running->join_retval = value_ptr; // alert function will modify this. 
-	return swapcontext(running->uctx, scheduler);
+int worker_join(worker_t child_thread, void **value_ptr) {
+	// block signals
+	tcb *waiting_on_tcb_already_ended = contains(ended_tcbs, child_thread);
+	/* One cannot make assumptions about the scheduler, and how it would
+	have interleaved the execution of child_thread after call to create() but before
+	to join. Namely, the child_thread could have already completed before the caller
+	enters this function.*/
+	if (waiting_on_tcb_already_ended) {
+		printf("%d is already done. so %d won't wait on it.\n", child_thread, running->thread_id);
+		*value_ptr = waiting_on_tcb_already_ended->ret_value;
+	} else {
+		printf("%d is going to wait on %d\n", running->thread_id, child_thread);
+		running->join_tid = child_thread;
+		running->join_retval = value_ptr; // alert function will modify this. 
+	}
+
+	swapcontext(running->uctx, scheduler);
+	// unblock signals
+	return 0;
 }
 
 int worker_mutex_init(worker_mutex_t *mutex) {
@@ -680,7 +711,7 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 
 void* func_bar(void *) {
 	printf("WORKER %d: func_bar ran\n", running->thread_id);
-	//swapcontext(running->uctx, scheduler);
+	swapcontext(running->uctx, scheduler);
 	printf("WORKER %d: func_bar ran again\n", running->thread_id);
 	return NULL;
 }
@@ -689,15 +720,15 @@ int main(int argc, char **argv) {
 	printf("MAIN: Starting main: no queues running yet\n");
 
 	worker_t worker_1;
-	worker_t worker_2;
+	//worker_t worker_2;
 	worker_create(&worker_1, (void *) &func_bar, NULL);
-	worker_create(&worker_2, (void *) &func_bar, NULL);
+	//worker_create(&worker_2, (void *) &func_bar, NULL);
 
 	printf("MAIN: before joining 1\n");
 
 	//worker_create(&worker_3, NULL, (void *) &func_bar, NULL);
 	worker_join(worker_1, NULL);
-	worker_join(worker_2, NULL);
+	//worker_join(worker_2, NULL);
 	//worker_join(worker_3, NULL);
 
 	/*
