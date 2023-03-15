@@ -658,38 +658,44 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
 	return 0;
 }
 
+/**
+ * Once a thread relinquishes the lock, there may
+ * still exist a group of threads waiting to acquire
+ * that lock. The scheduler would have skipped those
+ * threads.
+ * 
+ * In order to give one of these a chance to acquire the lock,
+ * (to let the Scheduler schedule one thread among the group),
+ * we change their tcb state s.t. it reflects that they should
+ * not be skipped. Note that, the first thread from that group
+ * waiting on the mutex this thread relinquished will gain
+ * control over the lock. The remainder, if scheduled before the new
+ * acquirer gives up the lock, will go back into a waiting state
+ * by changing their seeking_lock. 
+ * 
+ * (See worker_mutex_lock for more details.)
+*/
+void broadcast_lock_release(worker_mutex_t mutex) {
+    Node *ptr = tcbs->front;
+	while(ptr) {
+		worker_mutex_t *seeking = &(ptr->data->seeking_lock);
+		*seeking = (*seeking == mutex) ? NONEXISTENT_MUTEX : (*seeking);
+
+		ptr = ptr->next;
+	}
+}
+
 /* release the mutex lock */
 int worker_mutex_unlock(worker_mutex_t *mutex) {
     // block signals    
+	
 	// Can't unlock mutex when caller does not have a lock over it.
 	assert(is_held_by(running->thread_id, *mutex));
 
 	// Release the lock.
 	(fetch_from_mutex_list(*mutex))->holder_tid = NONEXISTENT_THREAD;
+	broadcast_lock_release(*mutex);
 
-    /**
-     * Once a thread relinquishes the lock, there may
-     * still exist a group of threads waiting to acquire
-     * that lock. The scheduler would have skipped those
-     * threads.
-     * 
-     * In order to give one of these a chance to acquire the lock,
-     * (to let the Scheduler schedule one thread among the group),
-     * we change their tcb state s.t. it reflects that they should
-     * not be skipped. Note that, the first thread from that group
-     * waiting on the mutex this thread relinquished will gain
-     * control over the lock. The remainder, if scheduled before the new
-     * acquirer gives up the lock, will go back into a waiting state
-     * by changing their seeking_lock. 
-     * 
-     * (See worker_mutex_lock for more details.)
-    */
-    Node *ptr = tcbs->front;
-	while(ptr) {
-		worker_mutex_t *seeking = &(ptr->data->seeking_lock);
-		*seeking = (*seeking == *mutex) ? NONEXISTENT_MUTEX : (*seeking);
-		ptr = ptr->next;
-	}
     // unblock signals
 	return 0;
 }
