@@ -209,7 +209,7 @@ void print_queue(Queue* q_ptr) {
 
 void print_mutex_list(mutex_list *mutexes) {
     mutex_node *ptr = mutexes->front;
-    printf("Printing lst: \n");
+    printf("Printing lst of mutexes: \n");
     
     while(ptr) {
         printf("%d held by %d.\n", ptr->data->lock_num, ptr->data->holder_tid);
@@ -420,6 +420,8 @@ void cleanup_library() {
 
 	free(last_created_worker_tid);
 	free(current_mutex_num);
+
+	assert(!(mutexes->front));
 	free(mutexes);
 
 	free(scheduler->uc_stack.ss_sp);
@@ -576,15 +578,22 @@ int worker_mutex_init(worker_mutex_t *mutex) {
 	assert(mutexes != NULL);
 
     // Create mutex.
-    mutex = (worker_mutex_t *) malloc(sizeof(worker_mutex_t));
-    mutex->lock_num = (*current_mutex_num)++;
-    mutex->holder_tid = NONEXISTENT_THREAD;
+	mutex_num new_mutex_num = (*current_mutex_num)++;
+	mutex->lock_num = new_mutex_num;
+	mutex->holder_tid = NONEXISTENT_THREAD;
 
+    mutex = (worker_mutex_t *) malloc(sizeof(worker_mutex_t));
+    mutex->lock_num = new_mutex_num;
+    mutex->holder_tid = NONEXISTENT_THREAD;
+	
     // Insert created mutex
     mutex_node *mutex_item = (mutex_node *) malloc(sizeof(mutex_node));
     mutex_item->data = mutex;
     mutex_item->next = mutexes->front;
     mutexes->front = mutex_item;
+
+	printf("Printing mutexes: ");
+	print_mutex_list(mutexes);
 
     // unblock signals.
     return 0;
@@ -669,8 +678,11 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 int worker_mutex_destroy(worker_mutex_t *mutex) {
     // block signals - accessing shared resources.
     // Ensure mutexes is not empty.
-    assert(!mutexes);
-    assert(!(mutexes->front));
+    assert(mutexes);
+    assert(mutexes->front);
+
+	print_mutex_list(mutexes);
+	printf("Seeking to remove target wiht lock num: (%d) \n", mutex->lock_num);
 
     mutex_num target_lock_num = mutex->lock_num;
     
@@ -698,6 +710,7 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
         return 0;
     }
 
+	print_mutex_list(mutexes);
     // Lock not found.
     // unblock signals
     return -1;
@@ -709,26 +722,7 @@ worker_mutex_t mut1;
 
 void mtest0() {
 	worker_mutex_init(&mut1);
-	worker_mutex_destroy(&mut1);
-}
-
-void mtest_func1(void *) {
-	worker_yield();
-	worker_exit(NULL);
-}
-
-void mtest1() {
-	worker_mutex_init(&mut1);
-
-	worker_t worker_1;
-	worker_t worker_2;
-	
-	worker_create(&worker_1, (void *) &mtest_func1, NULL);
-	worker_create(&worker_2, (void *) &mtest_func1, NULL);
-	
-	worker_join(worker_1, NULL);
-	worker_join(worker_2, NULL);
-
+	printf("Calling destroy on %d \n", mut1.lock_num);
 	worker_mutex_destroy(&mut1);
 }
 
