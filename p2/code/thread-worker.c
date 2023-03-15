@@ -661,9 +661,11 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
 /* release the mutex lock */
 int worker_mutex_unlock(worker_mutex_t *mutex) {
     // block signals    
-	mutex_node *node_containing_mutex = fetch_from_mutex_list(*mutex);
-	assert(node_containing_mutex); // can't unlock destroyed mutex.
-	node_containing_mutex->holder_tid = NONEXISTENT_THREAD;
+	// Can't unlock mutex when caller does not have a lock over it.
+	assert(is_held_by(running->thread_id, *mutex));
+
+	// Release the lock.
+	(fetch_from_mutex_list(*mutex))->holder_tid = NONEXISTENT_THREAD;
 
     /**
      * Once a thread relinquishes the lock, there may
@@ -698,6 +700,12 @@ int worker_mutex_destroy(worker_mutex_t *mutex_to_destroy) {
     // Ensure mutexes is not empty.
     assert(mutexes);
 
+	// If the mutex is held by some thread, unlock it first.
+	if (!is_held_by(NONEXISTENT_THREAD, *mutex_to_destroy)) {
+		worker_mutex_unlock(mutex_to_destroy);
+	}
+
+	// Proceed to destroy unlocked mutex.
 	mutex_node *front = mutexes->front;
     assert(front);
 
