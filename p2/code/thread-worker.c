@@ -106,7 +106,7 @@ tcb* remove_from(List *lst_ptr, worker_t target) {
     Node *ptr = front->next;
     Node *prev = front;
 
-    for (; !ptr; prev = prev->next, ptr = ptr->next) {
+    for (; ptr; prev = prev->next, ptr = ptr->next) {
         if (ptr->data->thread_id != target) {
             continue;
         }
@@ -313,12 +313,9 @@ int is_blocked(tcb *thread) {
 */
 void alert_waiting_threads(worker_t ended, void *ended_retval_ptr) {
 	Node *ptr = tcbs->front;
-	print_list(tcbs);
-	printf("[ALERT]: %d ended and alerting\n", ended);
 
 	// Notify all threads who called worker_join(ended, retval).
 	while(ptr) {
-		printf("%d is waiting on %d\n", ptr->data->thread_id, ptr->data->join_tid);
 		if (ptr->data->join_tid == ended) {
 			ptr->data->join_tid = NONEXISTENT_THREAD; // No longer waiting.
 			printf("\n\n[ALERT]: %d alerted that %d ended.\n\n", ptr->data->thread_id, running->thread_id);
@@ -382,15 +379,12 @@ void round_robin_scheduler() {
  */
 void clean_exited_worker_thread() {
 	while(1) {
-		tcb *ended_tcb = remove_from(tcbs, running->thread_id);
-		insert(ended_tcbs, ended_tcb);
-		
+		insert(ended_tcbs, remove_from(tcbs, running->thread_id));
+
 		/* The following alert call is necessary if worker_thread forgot to call worker_exit().*/
-		alert_waiting_threads(ended_tcb->thread_id, NULL); // Never overwrite join return value. 
+		alert_waiting_threads(running->thread_id, NULL); // Never overwrite join return value. 
 	
 		running = NULL; // IMPORTANT FLAG so scheduler doesn't enqueue cleaned thread.
-		
-		printf("INFO[CLEANUP]: Cleaned ended tid: (%d)\n", ended_tcb->thread_id);
 		swapcontext(cleanup, scheduler);
 	}
 }
@@ -491,7 +485,6 @@ void init_library() {
 	if (atexit(cleanup_library) != 0) {
 		printf("Will be unable to free user level threads library mechanisms.\n");
 	}
-
 }
 
 int worker_create(worker_t * thread, void*(*function)(void*), void * arg)
@@ -511,7 +504,6 @@ int worker_create(worker_t * thread, void*(*function)(void*), void * arg)
 		insert(tcbs, running);
 	}
 
-	printf("INFO[worker_create]: created TCB for new worker\n");
 	// Create tcb for new_worker and put into q_arrival queue
 	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
 	new_tcb->thread_id = ++(*last_created_worker_tid);
@@ -531,9 +523,6 @@ int worker_create(worker_t * thread, void*(*function)(void*), void * arg)
 	// Put newly created tcb into structures used by the library.
 	enqueue(q_arrival, new_tcb);
 	insert(tcbs, new_tcb);
-	
-	printf("INFO[worker_create]: enqueued new worker into arrival queue: ");
-	print_queue(q_arrival);
 
 	// unblock signals.
 	return 0;
@@ -562,10 +551,14 @@ int worker_join(worker_t child_thread, void **value_ptr) {
 	to join. Namely, the child_thread could have already completed before the caller
 	enters this function.*/
 	if (waiting_on_tcb_already_ended) {
-		printf("%d is already done. so %d won't wait on it.\n", child_thread, running->thread_id);
-		*value_ptr = waiting_on_tcb_already_ended->ret_value;
+		printf("INFO[worker_join]: %d is already done. so %d won't wait on it.\n", 
+		child_thread, running->thread_id);
+
+		if (value_ptr != NULL) {
+			*value_ptr = waiting_on_tcb_already_ended->ret_value;
+		}
 	} else {
-		printf("%d is going to wait on %d\n", running->thread_id, child_thread);
+		printf("INFO[worker_join]: %d is going to wait on %d\n", running->thread_id, child_thread);
 		running->join_tid = child_thread;
 		running->join_retval = value_ptr; // alert function will modify this. 
 	}
@@ -691,7 +684,7 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
     mutex_node *ptr = mutexes->front->next;
     mutex_node *prev = mutexes->front;
 
-    for(; !ptr; prev = prev->next, ptr = ptr->next) {
+    for(; ptr; prev = prev->next, ptr = ptr->next) {
         if(ptr->data->lock_num != target_lock_num) {
             continue;
         }
@@ -720,12 +713,9 @@ int main(int argc, char **argv) {
 	printf("MAIN: Starting main: no queues running yet\n");
 
 	worker_t worker_1;
-	//worker_t worker_2;
+	worker_t worker_2;
 	worker_create(&worker_1, (void *) &func_bar, NULL);
 	//worker_create(&worker_2, (void *) &func_bar, NULL);
-
-	printf("MAIN: before joining 1\n");
-
 	//worker_create(&worker_3, NULL, (void *) &func_bar, NULL);
 	worker_join(worker_1, NULL);
 	//worker_join(worker_2, NULL);
