@@ -1,30 +1,11 @@
-The Goal of March 14 is to ensure our Library Functions and Mutexes things work as specified.
-
-more rough work:
-- See discord p2 function isBLocked.
-- We must imbue this into the schedule() function.
-
-Then proceed:
-=============
-
-- Correct & Clean up mutex_list.c: 
-    - Use constants #define
-    - Consistency in style
-    - Correctness of logic traced through
-    - malloc and free accounting properly.
-
-- Port mutex_list.c into thread-worker.c
-
-- Ensure tcb list logic for join and exit logically sound.
-    - malloc and free accounting proper.
-
-- Clean up code as it looks in thread-worker.c
 
 - Create a few test functions to ensure correctness:
-    - test1: main spawns one child and waits for it to terminate. worker calls exit.
-    - test2: test1 union (main needs to see the return value). worker calls exit.
-    - test3: main spawns two children and each yield correctly.
-    - test4: main spawns two children and waits for both to terminate and prints their return values.
+
+passed    - test1: main spawns one child and waits for it to terminate. worker calls exit.
+passed    - test2: main spawns two children and each yield correctly.
+
+segf    - test3: test1 union (main needs to see the return value). worker calls exit.
+segf    - test4: main spawns two children and waits for both to end and verifies return vals.
 
 - After ensuring correctness of logical flow for Library functions, test mutual exclusion.
     - test1: main creates locks, uses it, and deletes it.

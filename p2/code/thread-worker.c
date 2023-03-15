@@ -94,12 +94,11 @@ tcb* remove_from(List *lst_ptr, worker_t target) {
     tcb *target_tcb;
 
     if (front->data->thread_id == target) {
-        Node *match = front;
-        target_tcb = match->data;
+        target_tcb = front->data;
         lst_ptr->front = front->next;
         --(lst_ptr->size);
 
-        free(match);
+        free(front);
         return target_tcb;
     }
 
@@ -701,34 +700,51 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 
 //////////////////////////////////////////
 
-void* func_bar(void *) {
+void* test1_func(void *) {
 	printf("WORKER %d: func_bar ran\n", running->thread_id);
-	swapcontext(running->uctx, scheduler);
+	worker_yield();
 	printf("WORKER %d: func_bar ran again\n", running->thread_id);
-	return NULL;
+	worker_exit(NULL);
+}
+
+void test1() {
+	worker_t worker_1;
+	worker_t worker_2;
+
+	worker_create(&worker_1, (void *) &test1_func, NULL);
+	worker_create(&worker_2, (void *) &test1_func, NULL);
+
+	worker_join(worker_1, NULL);
+	worker_join(worker_2, NULL);
+}
+
+void* test2_func(int *x) {
+	*x = 1776;
+	worker_exit(x);
+}
+
+void test2() {
+	worker_t worker_1; int *result_1;
+	worker_t worker_2; int *result_2;
+
+	// This worker will not be done before main joins on it.
+	// It will not be in ended_tcbs until main joins on it.
+	worker_create(&worker_1, (void *) &test2_func, NULL);
+
+	// This worker will be done before main joins on it.
+	// It will be in ended_tcbs when main joins on it. 
+	worker_create(&worker_2, (void *) &test2_func, NULL);
+
+	worker_join(worker_1, (void *) &result_1);
+	worker_join(worker_2, (void *) &result_2);
+
+	// Hence this test is about verifying that 
+	// data can be safely stored in the aforementioned two interleavings.
+	assert(*result_1 == 1776);
+	assert(*result_2 == 1776);
 }
 
 int main(int argc, char **argv) {
-	printf("MAIN: Starting main: no queues running yet\n");
-
-	worker_t worker_1;
-	worker_t worker_2;
-	worker_t worker_3;
-	worker_create(&worker_1, (void *) &func_bar, NULL);
-	worker_create(&worker_2, (void *) &func_bar, NULL);
-	worker_create(&worker_3, (void *) &func_bar, NULL);
-	worker_join(worker_1, NULL);
-	worker_join(worker_2, NULL);
-	worker_join(worker_3, NULL);
-
-	/*
-	worker_t worker_2 = 38;
-	worker_create(&worker_2, NULL, (void *) &func_bar, NULL);
-
-	worker_t worker_3 = 77;
-	worker_create(&worker_3, NULL, (void *) &func_bar, NULL);
-	*/
-
-	printf("MAIN: Ending main\n");
+	test2();
 }
 
