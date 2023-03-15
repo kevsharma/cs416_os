@@ -585,7 +585,6 @@ int worker_mutex_init(worker_mutex_t *new_mutex) {
     mutex_item->next = mutexes->front;
     mutexes->front = mutex_item;
 
-	printf("Printing mutexes: ");
 	print_mutex_list(mutexes);
 
     // unblock signals.
@@ -654,7 +653,9 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
 	assert(m); // can't acquire an invalid node	
 	m->holder_tid = running->thread_id; // u can make this atomic. 
 
-    // unblock signals - finished accessing shared resource
+	printf("mutex acquired successfully by %d\n", running->thread_id);
+    
+	// unblock signals - finished accessing shared resource
 	return 0;
 }
 
@@ -721,6 +722,9 @@ int worker_mutex_destroy(worker_mutex_t *mutex_to_destroy) {
     if (front->lock_num == *mutex_to_destroy) {
         mutexes->front = front->next;
         free(front);
+		*mutex_to_destroy = NONEXISTENT_MUTEX;
+		
+		print_mutex_list(mutexes);
         return 0;
     }
 
@@ -733,6 +737,7 @@ int worker_mutex_destroy(worker_mutex_t *mutex_to_destroy) {
         if(ptr->lock_num == *mutex_to_destroy) {  
 			prev->next = ptr->next;
 			free(ptr);
+			*mutex_to_destroy = NONEXISTENT_MUTEX;
 
 			print_mutex_list(mutexes);
 			return 0;
@@ -746,21 +751,63 @@ int worker_mutex_destroy(worker_mutex_t *mutex_to_destroy) {
 
 //////////////////////////////////////////
 
-worker_mutex_t mut1;
+
+static worker_mutex_t mut;
 
 void mtest0() {
-	printf("calling create mutex");
+	worker_mutex_t mut1;
 	worker_mutex_init(&mut1);
-
-	printf("Calling destroy on %d \n", mut1);
 	worker_mutex_destroy(&mut1);
-
-	printf("Post removal: ");
 	print_mutex_list(mutexes);
 }
 
+void mtest1_func(void *) {
+	printf("WORKER %d: acquiring lock. \n", running->thread_id);
+	worker_mutex_lock(&mut);
+
+	printf("WORKER %d: releasing lock.\n", running->thread_id);
+	worker_mutex_unlock(&mut);
+}
+
+void mtest1() {
+	worker_mutex_init(&mut);
+
+	worker_t worker_1;
+	worker_create(&worker_1, (void *) &mtest1_func, NULL);
+	worker_join(worker_1, NULL);
+
+	worker_mutex_destroy(&mut);
+}
+
+void mtest2_func(void *) {
+	printf("WORKER %d: acquiring lock. \n", running->thread_id);
+	worker_mutex_lock(&mut);
+
+	printf("Yielding control to check if scheduler skips other worker");
+	worker_yield();
+	
+	printf("WORKER %d: releasing lock.\n", running->thread_id);
+	worker_mutex_unlock(&mut);
+}
+
+void mtest2() {
+	worker_t worker_1;
+	worker_t worker_2;
+
+	worker_mutex_init(&mut);
+	
+	worker_create(&worker_1, (void *) &mtest2_func, NULL);
+	worker_create(&worker_2, (void *) &mtest2_func, NULL);
+
+	worker_join(worker_1, NULL);
+	worker_join(worker_2, NULL);
+
+	worker_mutex_destroy(&mut);
+}
+
+
 int main(int argc, char **argv) {
-	mtest0();
+	mtest2();
 }
 
 /* test1,2,3 test library functions. */
