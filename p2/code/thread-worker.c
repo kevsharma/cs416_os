@@ -10,10 +10,7 @@ typedef unsigned int worker_t;
 typedef unsigned int mutex_num;
 
 /* mutex struct definition */
-typedef struct worker_mutex_t {
-	mutex_num lock_num;
-	worker_t holder_tid;
-} worker_mutex_t;
+typedef unsigned int worker_mutex_t;
 
 typedef struct TCB {
 	worker_t 		thread_id;
@@ -21,7 +18,7 @@ typedef struct TCB {
 	void			*ret_value;
 	worker_t		join_tid;		/* NONEXISTENT_THREAD if not currently waiting on another thread. */
 	void **			join_retval;	
-	mutex_num		seeking_lock;	/* NONEXISTENT_MUTEX if not seeking to acquire a mutex. */
+	worker_mutex_t	seeking_lock;	/* NONEXISTENT_MUTEX if not seeking to acquire a mutex. */
 } tcb; 
 
 typedef struct Node {
@@ -42,7 +39,8 @@ typedef struct Queue {
 } Queue;
 
 typedef struct mutex_node {
-    worker_mutex_t *data;
+    worker_mutex_t lock_num;
+	worker_t holder_tid;
     struct mutex_node *next;
 } mutex_node;
 
@@ -212,7 +210,7 @@ void print_mutex_list(mutex_list *mutexes) {
     printf("Printing lst of mutexes: \n");
     
     while(ptr) {
-        printf("%d held by %d.\n", ptr->data->lock_num, ptr->data->holder_tid);
+        printf("%d held by %d.\n", ptr->lock_num, ptr->holder_tid);
         ptr = ptr->next;
     }
 
@@ -270,7 +268,7 @@ static ucontext_t *scheduler;
 static ucontext_t *cleanup;
 
 static worker_t *last_created_worker_tid;
-static mutex_num *current_mutex_num;
+static worker_mutex_t *current_mutex_num;
 static mutex_list *mutexes; // list of (mutex_num, holder_tid) for currently init-d mutexes.
 
 /**
@@ -569,26 +567,21 @@ int worker_join(worker_t child_thread, void **value_ptr) {
 	return 0;
 }
 
-int worker_mutex_init(worker_mutex_t *mutex) {
+int worker_mutex_init(worker_mutex_t *new_mutex) {
     // block signals (we will access shared mutex list).
 	if (!scheduler) { // first time library called:
 		init_library();
 	}
     
-	assert(mutexes != NULL);
+	assert(mutexes);
 
     // Create mutex.
-	mutex_num new_mutex_num = (*current_mutex_num)++;
-	mutex->lock_num = new_mutex_num;
-	mutex->holder_tid = NONEXISTENT_THREAD;
+	*new_mutex = (*current_mutex_num)++;
 
-    mutex = (worker_mutex_t *) malloc(sizeof(worker_mutex_t));
-    mutex->lock_num = new_mutex_num;
-    mutex->holder_tid = NONEXISTENT_THREAD;
-	
     // Insert created mutex
     mutex_node *mutex_item = (mutex_node *) malloc(sizeof(mutex_node));
-    mutex_item->data = mutex;
+    mutex_item->lock_num = *new_mutex;
+	mutex_item->holder_tid = NONEXISTENT_THREAD;
     mutex_item->next = mutexes->front;
     mutexes->front = mutex_item;
 
@@ -599,7 +592,28 @@ int worker_mutex_init(worker_mutex_t *mutex) {
     return 0;
 }
 
-/* aquire the mutex lock */
+/* Returns NULL if target is not a currently initialized mutex, mutex_node* otherwise. */
+mutex_node* fetch_from_mutex_list(worker_mutex_t target) {
+	assert(mutexes);
+
+	mutex_node *ptr = mutexes->front;
+	while (ptr) {
+		if (ptr->lock_num == target) {
+			return ptr;
+		}
+		ptr = ptr->next;
+	}
+
+	return NULL;
+}
+
+int is_held_by(worker_t this_tid, worker_mutex_t target) {
+	mutex_node *node_containing_mutex = fetch_from_mutex_list(target);
+	assert(node_containing_mutex); // can't hold a mutex which doesn't exist.
+
+	return node_containing_mutex->holder_tid == this_tid;
+}
+
 int worker_mutex_lock(worker_mutex_t *mutex) {
     // block signals - accesses shared resource mutex.
 
@@ -630,19 +644,27 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
      * the lock since B or C can make no meaningful progress into the 
      * critical section anyway.
     */
-    while(mutex->holder_tid != NONEXISTENT_THREAD) {
-        running->seeking_lock = mutex->lock_num;
-        swapcontext(running->uctx, scheduler);
-    }
+    while(!is_held_by(NONEXISTENT_THREAD, *mutex)) {
+		running->seeking_lock = *mutex;
+		swapcontext(running->uctx, scheduler);
+	}
 
-    mutex->holder_tid = running->thread_id;
+	// now mutex not held by any thread so acquire.
+	mutex_node *m = fetch_from_mutex_list(*mutex);
+	assert(m); // can't acquire an invalid node	
+	m->holder_tid = running->thread_id; // u can make this atomic. 
+
     // unblock signals - finished accessing shared resource
 	return 0;
 }
 
 /* release the mutex lock */
 int worker_mutex_unlock(worker_mutex_t *mutex) {
-    // block signals
+    // block signals    
+	mutex_node *node_containing_mutex = fetch_from_mutex_list(*mutex);
+	assert(node_containing_mutex); // can't unlock destroyed mutex.
+	node_containing_mutex->holder_tid = NONEXISTENT_THREAD;
+
     /**
      * Once a thread relinquishes the lock, there may
      * still exist a group of threads waiting to acquire
@@ -660,14 +682,10 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
      * 
      * (See worker_mutex_lock for more details.)
     */
-    mutex->holder_tid = NONEXISTENT_THREAD; 
-
     Node *ptr = tcbs->front;
-	while(!ptr) {
-        if (ptr->data->seeking_lock == mutex->lock_num) {
-			ptr->data->seeking_lock = NONEXISTENT_MUTEX;
-        }
-
+	while(ptr) {
+		worker_mutex_t *seeking = &(ptr->data->seeking_lock);
+		*seeking = (*seeking == *mutex) ? NONEXISTENT_MUTEX : (*seeking);
 		ptr = ptr->next;
 	}
     // unblock signals
@@ -675,42 +693,38 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 }
 
 /* 0 = success. -1 = no such mutex. */
-int worker_mutex_destroy(worker_mutex_t *mutex) {
+int worker_mutex_destroy(worker_mutex_t *mutex_to_destroy) {
     // block signals - accessing shared resources.
     // Ensure mutexes is not empty.
     assert(mutexes);
-    assert(mutexes->front);
+
+	mutex_node *front = mutexes->front;
+    assert(front);
 
 	print_mutex_list(mutexes);
-	printf("Seeking to remove target wiht lock num: (%d) \n", mutex->lock_num);
+	printf("Seeking to remove target wiht lock num: (%d) \n", *mutex_to_destroy);
 
-    mutex_num target_lock_num = mutex->lock_num;
-    
-    if (mutexes->front->data->lock_num == target_lock_num) {
-        mutex_node *match = mutexes->front;
-        mutexes->front = mutexes->front->next;
-        free(match->data);
-        free(match);
+    if (front->lock_num == *mutex_to_destroy) {
+        mutexes->front = front->next;
+        free(front);
         return 0;
     }
 
     // Guaranteed to have at least two nodes.
 
-    mutex_node *ptr = mutexes->front->next;
-    mutex_node *prev = mutexes->front;
+    mutex_node *ptr = front->next;
+    mutex_node *prev = front;
 
     for(; ptr; prev = prev->next, ptr = ptr->next) {
-        if(ptr->data->lock_num != target_lock_num) {
-            continue;
-        }
+        if(ptr->lock_num == *mutex_to_destroy) {  
+			prev->next = ptr->next;
+			free(ptr);
 
-        prev->next = ptr->next;
-        free(ptr->data);
-        free(ptr);
-        return 0;
+			print_mutex_list(mutexes);
+			return 0;
+        }
     }
 
-	print_mutex_list(mutexes);
     // Lock not found.
     // unblock signals
     return -1;
@@ -721,9 +735,14 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 worker_mutex_t mut1;
 
 void mtest0() {
+	printf("calling create mutex");
 	worker_mutex_init(&mut1);
-	printf("Calling destroy on %d \n", mut1.lock_num);
+
+	printf("Calling destroy on %d \n", mut1);
 	worker_mutex_destroy(&mut1);
+
+	printf("Post removal: ");
+	print_mutex_list(mutexes);
 }
 
 int main(int argc, char **argv) {
@@ -732,7 +751,7 @@ int main(int argc, char **argv) {
 
 /* test1,2,3 test library functions. */
 
-void* test1_func(void *) {
+void test1_func(void *) {
 	printf("WORKER %d: func_bar ran\n", running->thread_id);
 	worker_yield();
 	printf("WORKER %d: func_bar ran again\n", running->thread_id);
