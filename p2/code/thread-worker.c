@@ -426,6 +426,8 @@ void cleanup_library() {
 	free(scheduler);
 	free(cleanup->uc_stack.ss_sp);
 	free(cleanup);
+
+	printf("INFO[ATEXIT]: library cleaned.");
 }
 
 /* Initializes user-level threads library supporting mechanisms. */
@@ -719,21 +721,24 @@ void test1() {
 }
 
 void* test2_func(int *x) {
+	printf("DEBUG[test2_func]: x holds value: %d\n", x);
 	*x = 1776;
 	worker_exit(x);
 }
 
 void test2() {
-	worker_t worker_1; int *result_1;
-	worker_t worker_2; int *result_2;
+	worker_t worker_1; 
+	int *result_1 = malloc(sizeof(int));
+	worker_t worker_2; 
+	int *result_2 = malloc(sizeof(int));
 
 	// This worker will not be done before main joins on it.
 	// It will not be in ended_tcbs until main joins on it.
-	worker_create(&worker_1, (void *) &test2_func, NULL);
+	worker_create(&worker_1, (void *) &test2_func, result_1);
 
 	// This worker will be done before main joins on it.
 	// It will be in ended_tcbs when main joins on it. 
-	worker_create(&worker_2, (void *) &test2_func, NULL);
+	worker_create(&worker_2, (void *) &test2_func, result_2);
 
 	worker_join(worker_1, (void *) &result_1);
 	worker_join(worker_2, (void *) &result_2);
