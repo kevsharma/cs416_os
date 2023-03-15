@@ -793,21 +793,49 @@ void mtest2_func(void *) {
 void mtest2() {
 	worker_t worker_1;
 	worker_t worker_2;
+	worker_t worker_3;
 
 	worker_mutex_init(&mut);
 	
 	worker_create(&worker_1, (void *) &mtest2_func, NULL);
 	worker_create(&worker_2, (void *) &mtest2_func, NULL);
+	worker_create(&worker_3, (void *) &mtest2_func, NULL);
 
 	worker_join(worker_1, NULL);
 	worker_join(worker_2, NULL);
+	worker_join(worker_3, NULL);
 
 	worker_mutex_destroy(&mut);
 }
 
+// this test should fail.
+void mtest3() {
+	worker_mutex_t mut1;
+	worker_mutex_t mut2;
+
+	worker_mutex_init(&mut1);
+	worker_mutex_destroy(&mut1);
+	
+	worker_mutex_init(&mut2);
+	// don't clean mut2 -> should fail.
+	
+	print_mutex_list(mutexes);
+}
+
+// this test should fail.
+void mtest4() {
+	worker_mutex_t mut1;
+	worker_mutex_init(&mut1);
+	worker_mutex_unlock(&mut1);
+}
+
+void mtest5() {
+
+}
+
 
 int main(int argc, char **argv) {
-	mtest2();
+	mtest4();
 }
 
 /* test1,2,3 test library functions. */
