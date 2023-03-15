@@ -714,12 +714,13 @@ int main(int argc, char **argv) {
 
 	worker_t worker_1;
 	worker_t worker_2;
+	worker_t worker_3;
 	worker_create(&worker_1, (void *) &func_bar, NULL);
-	//worker_create(&worker_2, (void *) &func_bar, NULL);
-	//worker_create(&worker_3, NULL, (void *) &func_bar, NULL);
+	worker_create(&worker_2, (void *) &func_bar, NULL);
+	worker_create(&worker_3, (void *) &func_bar, NULL);
 	worker_join(worker_1, NULL);
-	//worker_join(worker_2, NULL);
-	//worker_join(worker_3, NULL);
+	worker_join(worker_2, NULL);
+	worker_join(worker_3, NULL);
 
 	/*
 	worker_t worker_2 = 38;
