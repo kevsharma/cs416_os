@@ -285,6 +285,10 @@ static mutex_list *mutexes; // list of (mutex_num, holder_tid) for currently ini
 */
 static tcb *running; // Currently executing thread.
 
+/* Preemption mechanisms: */
+static struct itimerval *timer;
+static struct sigaction *sa;
+
 ////////////////////////////////////////////////////////////////////////////////////////////
 
 /* returns 1 if [thread_id] is waiting on a thread, 0 otherwise. */
@@ -337,28 +341,27 @@ void alert_waiting_threads(worker_t ended, void *ended_retval_ptr) {
 }
 
 /* One shot timer that will send SIGPROF signal after TIME_QUANTUM microseconds. */
-void set_timer(){
-	struct itimerval timer;
+void set_timer() {
+	timer->it_interval.tv_sec = 0;
+	timer->it_interval.tv_usec = 0;
 
-	timer.it_interval.tv_usec = 0;
+	timer->it_value.tv_sec = 0;
+	timer->it_value.tv_usec = TIME_QUANTUM;
 
-	timer.it_value.tv_usec = TIME_QUANTUM;
-
-	setitimer(ITIMER_PROF,&timer, NULL);
+	setitimer(ITIMER_PROF, timer, NULL);
 }
 
 /* Swaps the context to scheduler after a SIGPROF signal. */
-void signal_handler(){
-	//printf("Swapping to scheduler context\n");
+void timer_signal_handler(int signum) {
+	printf("RING RING -> Swapping to scheduler context\n");
 	swapcontext(running->uctx, scheduler);
 }
 
 /* Registers up sigaction on SIGPROF signal to call signal_handler() */
-void register_handler(){
-	struct sigaction sa;
-	memset(&sa,0,sizeof(sa));
-	sa.sa_handler = &signal_handler;
-	sigaction (SIGPROF, &sa, NULL);
+void register_handler() {
+	memset(sa, 0, sizeof(*sa));
+	sa->sa_handler = &timer_signal_handler;
+	sigaction(SIGPROF, sa, NULL);
 }
 
 /* Initializes and returns sigset for use in sigprocmask(). */
@@ -432,6 +435,10 @@ void clean_exited_worker_thread() {
 
 /* Registered with atexit() upon library's first use invocation. */
 void cleanup_library() {
+	/* Remove preemption mechanisms */
+	free(timer);
+	free(sa);
+
 	/* Remove main from scheduled queue and tcbs list.*/
 	// main already removed lol //running = dequeue(q_scheduled);	// Empties scheduled list since last thread.
 	remove_from(tcbs, MAIN_THREAD); // Empties tcbs list since last thread.
@@ -476,6 +483,11 @@ void cleanup_library() {
 
 /* Initializes user-level threads library supporting mechanisms. */
 void init_library() {
+	/* Register preemption handler for scheduler + cleanup. */
+	timer = (struct itimerval *) malloc(sizeof(struct itimerval));
+	sa = (struct sigaction *) malloc(sizeof(struct sigaction));
+	register_handler();
+
 	// Initialize arrival and scheduled queue.
 	assert(isUninitialized(q_arrival));
 	q_arrival = (Queue *) malloc(sizeof(Queue));
@@ -536,8 +548,6 @@ void init_library() {
 
 	insert(tcbs, running);
 
-	register_handler();
-
 	// Register atexit() function to clean up supporting mechanisms.
 	if (atexit(cleanup_library) != 0) {
 		printf("Will be unable to free user level threads library mechanisms.\n");
@@ -549,6 +559,7 @@ int worker_create(worker_t * thread, void*(*function)(void*), void * arg)
 	// block signals - accessing shared resource: tcb list and queues.
 	sigset_t set = sigset_init();
 	sigprocmask(SIG_SETMASK,&set,NULL);
+
 	if (!scheduler) { // first time library called:
 		init_library();
 	}
@@ -588,9 +599,11 @@ void worker_exit(void *value_ptr) {
 	// block signals - accessing shared tcb list in alert.
 	sigset_t set = sigset_init();
 	sigprocmask(SIG_SETMASK,&set,NULL);
+
 	running->ret_value = value_ptr;
 	alert_waiting_threads(running->thread_id, value_ptr); 
-	// unblock signals - finished accessing shared tcb list. (redundant since context ends)
+	
+	// unblock signals - finished accessing shared tcb list.
 	sigprocmask(SIG_UNBLOCK,&set, NULL);
 	// Transfer then flows to cleanup context.
 }
@@ -600,6 +613,7 @@ int worker_join(worker_t child_thread, void **value_ptr) {
 	// block signals
 	sigset_t set = sigset_init();
 	sigprocmask(SIG_SETMASK,&set,NULL);
+
 	tcb *waiting_on_tcb_already_ended = contains(ended_tcbs, child_thread);
 	/* One cannot make assumptions about the scheduler, and how it would
 	have interleaved the execution of child_thread after call to create() but before
@@ -629,6 +643,7 @@ int worker_mutex_init(worker_mutex_t *new_mutex) {
     // block signals (we will access shared mutex list).
 	sigset_t set = sigset_init();
 	sigprocmask(SIG_SETMASK,&set,NULL);
+
 	if (!scheduler) { // first time library called:
 		init_library();
 	}
@@ -773,6 +788,7 @@ int worker_mutex_destroy(worker_mutex_t *mutex_to_destroy) {
     // block signals - accessing shared resources.
 	sigset_t set = sigset_init();
 	sigprocmask(SIG_SETMASK,&set,NULL);
+
     // Ensure mutexes is not empty.
     assert(mutexes);
 
@@ -823,6 +839,29 @@ int worker_mutex_destroy(worker_mutex_t *mutex_to_destroy) {
 
 
 static worker_mutex_t mut;
+
+void ptest1_func(void *i) {
+	printf("Entered Function from tid %d: \n", running->thread_id);
+	while(1) {
+		//worker_yield();
+	}
+	printf("exited Function from tid %d: \n", running->thread_id);
+}
+
+void ptest1() {
+	worker_t worker_1;
+	worker_t worker_2;
+
+	worker_create(&worker_1, (void *) &ptest1_func, NULL);
+	worker_create(&worker_2, (void *) &ptest1_func, NULL);
+
+	worker_join(worker_1, NULL);
+	worker_join(worker_2, NULL);
+}
+
+int main(int argc, char **argv) {
+	ptest1();
+}
 
 void mtest0() {
 	worker_mutex_t mut1;
@@ -901,11 +940,6 @@ void mtest4() {
 
 void mtest5() {
 
-}
-
-
-int main(int argc, char **argv) {
-	mtest4();
 }
 
 /* test1,2,3 test library functions. */
