@@ -410,6 +410,7 @@ void round_robin_scheduler() {
 		 * Only start timer IFF tcb's list size is greater than 1 (> 1).
 		 * This way, we do not context switch out of main if there is no point to doing so.
 		*/
+
 		if(tcbs->size > 1){
 			set_timer();
 		}
@@ -556,23 +557,16 @@ void init_library() {
 
 int worker_create(worker_t * thread, void*(*function)(void*), void * arg)
 {
-	// block signals - accessing shared resource: tcb list and queues.
-	sigset_t set = sigset_init();
-	sigprocmask(SIG_SETMASK,&set,NULL);
-
 	if (!scheduler) { // first time library called:
 		init_library();
 	}
 
 	// Create tcb for new_worker and put into q_arrival queue
 	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
-	new_tcb->thread_id = ++(*last_created_worker_tid);
-	*thread = new_tcb->thread_id;
 	new_tcb->ret_value = NULL;
 	new_tcb->join_tid = NONEXISTENT_THREAD; // not waiting on any thread
 	new_tcb->join_retval = NULL;
 	new_tcb->seeking_lock = NONEXISTENT_MUTEX; // not waiting on any lock
-
 	new_tcb->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
 	getcontext(new_tcb->uctx); // heap space stores context
 	new_tcb->uctx->uc_link = cleanup; // all workers must flow into cleanup
@@ -580,12 +574,19 @@ int worker_create(worker_t * thread, void*(*function)(void*), void * arg)
 	new_tcb->uctx->uc_stack.ss_sp = malloc(4096);
 	makecontext(new_tcb->uctx, (void *) function, 1, arg); 
 
-	// Put newly created tcb into structures used by the library.
+	// Synchronize access to shared resources.
+	sigset_t set = sigset_init();
+	sigprocmask(SIG_SETMASK, &set, NULL);
+
+	new_tcb->thread_id = ++(*last_created_worker_tid); // shared resource.
+	*thread = new_tcb->thread_id;
+
 	enqueue(q_arrival, new_tcb);
 	insert(tcbs, new_tcb);
 
-	// unblock signals.
-	sigprocmask(SIG_UNBLOCK,&set, NULL);
+	// Finished accessing shared resources.
+	sigprocmask(SIG_UNBLOCK, &set, NULL);
+
 	return 0;
 };
 
@@ -605,6 +606,7 @@ void worker_exit(void *value_ptr) {
 	
 	// unblock signals - finished accessing shared tcb list.
 	sigprocmask(SIG_UNBLOCK,&set, NULL);
+
 	// Transfer then flows to cleanup context.
 }
 
@@ -640,22 +642,19 @@ int worker_join(worker_t child_thread, void **value_ptr) {
 }
 
 int worker_mutex_init(worker_mutex_t *new_mutex) {
-    // block signals (we will access shared mutex list).
+	if (!scheduler) { // first time library called:
+		init_library();
+	}    
+	
+	// block signals (we will access shared mutex list).
 	sigset_t set = sigset_init();
 	sigprocmask(SIG_SETMASK,&set,NULL);
 
-	if (!scheduler) { // first time library called:
-		init_library();
-	}
-    
 	assert(mutexes);
-
-    // Create mutex.
-	*new_mutex = (*current_mutex_num)++;
 
     // Insert created mutex
     mutex_node *mutex_item = (mutex_node *) malloc(sizeof(mutex_node));
-    mutex_item->lock_num = *new_mutex;
+    mutex_item->lock_num = (*current_mutex_num)++;
 	mutex_item->holder_tid = NONEXISTENT_THREAD;
     mutex_item->next = mutexes->front;
     mutexes->front = mutex_item;
@@ -837,9 +836,6 @@ int worker_mutex_destroy(worker_mutex_t *mutex_to_destroy) {
 
 //////////////////////////////////////////
 
-
-static worker_mutex_t mut;
-
 void ptest1_func(void *i) {
 	printf("Entered Function from tid %d: \n", running->thread_id);
 	while(1) {
@@ -862,6 +858,8 @@ void ptest1() {
 int main(int argc, char **argv) {
 	ptest1();
 }
+
+static worker_mutex_t mut;
 
 void mtest0() {
 	worker_mutex_t mut1;
