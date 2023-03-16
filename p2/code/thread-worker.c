@@ -353,8 +353,8 @@ void signal_handler(){
 	swapcontext(running->uctx, scheduler);
 }
 
-/* Sets up sigaction on SIGPROF signal to call signal_handler() */
-void set_sigaction(){
+/* Registers up sigaction on SIGPROF signal to call signal_handler() */
+void register_handler(){
 	struct sigaction sa;
 	memset(&sa,0,sizeof(sa));
 	sa.sa_handler = &signal_handler;
@@ -508,7 +508,7 @@ void init_library() {
 	scheduler->uc_link = NULL; // no longer cleanup. see atexit registered function.
 	scheduler->uc_stack.ss_size = 4096;
 	scheduler->uc_stack.ss_sp = malloc(4096);
-	scheduler->uc_sigmask = sigset_init(); //If we use a one shot timer this might be redundant
+	scheduler->uc_sigmask = sigset_init();
 	makecontext(scheduler, round_robin_scheduler, 0);
 
 	// Create cleanup context
@@ -516,7 +516,7 @@ void init_library() {
 	cleanup->uc_link = NULL;
 	cleanup->uc_stack.ss_size = 4096;
 	cleanup->uc_stack.ss_sp = malloc(4096);
-	cleanup->uc_sigmask = sigset_init(); //If we use a one shot timer this might be redundant
+	cleanup->uc_sigmask = sigset_init();
 	makecontext(cleanup, clean_exited_worker_thread, 0);
 
 	// worker_create should associate a new thread with an increasing worker_t tid.
@@ -535,6 +535,8 @@ void init_library() {
 	getcontext(running->uctx);
 
 	insert(tcbs, running);
+
+	register_handler();
 
 	// Register atexit() function to clean up supporting mechanisms.
 	if (atexit(cleanup_library) != 0) {
@@ -616,9 +618,10 @@ int worker_join(worker_t child_thread, void **value_ptr) {
 		running->join_retval = value_ptr; // alert function will modify this. 
 	}
 
-	swapcontext(running->uctx, scheduler);
 	// unblock signals
-	sigprocmask(SIG_UNBLOCK,&set, NULL); //CHECK this as this is unblocking after we are swapping the context
+	sigprocmask(SIG_UNBLOCK,&set, NULL);
+
+	swapcontext(running->uctx, scheduler); 
 	return 0;
 }
 
