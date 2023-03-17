@@ -207,6 +207,8 @@ int is_waiting_on_a_mutex(tcb *thread);
 
 int is_blocked(tcb *thread);
 
+int remaining_threads_blocked();
+
 /**
  * Once a thread relinquishes the lock, there may
  * still exist a group of threads waiting to acquire

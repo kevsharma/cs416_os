@@ -212,10 +212,22 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 
 	// Release the lock.
 	(fetch_from_mutexes(*mutex))->holder_tid = NONEXISTENT_THREAD;
-	broadcast_lock_release(*mutex);
+	broadcast_lock_release(*mutex); // Some thread may no longer be blocked.
 
     // unblock signals
 	sigprocmask(SIG_UNBLOCK, &set, NULL);
+
+	/**
+	 * There is a chance that all other threads were waiting on this thread
+	 * to unlock the mutex in which case the scheduler would have not set a 
+	 * timer. However, once the thread releases the lock, we must give the
+	 * other threads a fair chance to acquire the lock even if this means
+	 * an increased number of context switches. (This preserves the illusion
+	 * of concurrency better and is more FAIR.)
+	*/
+	printf("mutex released successfully by %d\n", running->thread_id);
+	++tot_cntx_switches;
+	swapcontext(running->uctx, scheduler);
 	return 0;
 }
 
@@ -315,16 +327,15 @@ static void round_robin_scheduler() {
 		
 		printf("after descheduling: ");
 		print_queue(q_scheduled);
-		printf("INFO[schedule 5]: Scheduling tid (%d)\n", running->thread_id);
-		
-		/**
-		 * Only start timer IFF tcb's list size is greater than 1 (> 1).
-		 * This way, we do not context switch out of main if there is no point to doing so.
-		*/
-		if(tcbs->size > 1){
+		printf("INFO[schedule 5]: remaining threads blocked: (%d) | and current (%d) blocked - (%d)\n",
+			remaining_threads_blocked(running), running->thread_id, is_blocked(running));
+
+		if (!remaining_threads_blocked(running)) {
 			set_timer();
 		}
-		++tot_cntx_switches;
+
+		++tot_cntx_switches; 
+		printf("INFO[schedule 5]: Scheduling tid (%d)\n", running->thread_id);
 		swapcontext(scheduler, running->uctx);
 	}
 }
@@ -569,6 +580,20 @@ int is_blocked(tcb *thread) {
 	return is_waiting_on_a_thread(thread) || is_waiting_on_a_mutex(thread);
 }
 
+/* Returns 1 if all threads except the one to be scheduled are blocked, 0 otherwise. */
+int remaining_threads_blocked(tcb *to_be_scheduled) {
+	Node *ptr = tcbs->front;
+	while (ptr) {
+		if (!is_blocked(ptr->data) && (ptr->data->thread_id != to_be_scheduled->thread_id)) {
+			return 0;
+		}
+		ptr = ptr->next;
+	}
+
+	// Since all other threads are blocked, no point in starting a timer
+	// to interrupt this one.
+	return 1;
+}
 
 void broadcast_lock_release(worker_mutex_t mutex) {
     Node *ptr = tcbs->front;
