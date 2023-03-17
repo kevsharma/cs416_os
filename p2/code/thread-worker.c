@@ -64,7 +64,9 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 
 	new_tcb->thread_id = ++(*last_created_worker_tid); // shared resource.
 	*thread = new_tcb->thread_id;
-
+	
+	new_tcb->previously_scheduled = 0;
+	clock_gettime(CLOCK_MONOTONIC, &new_tcb->arrival);
 	enqueue(q_arrival, new_tcb);
 	insert(tcbs, new_tcb);
 
@@ -330,6 +332,11 @@ static void round_robin_scheduler() {
 		printf("INFO[schedule 5]: remaining threads blocked: (%d) | and current (%d) blocked - (%d)\n",
 			remaining_threads_blocked(running), running->thread_id, is_blocked(running));
 
+		if (!running->previously_scheduled) {
+			clock_gettime(CLOCK_MONOTONIC, &running->first_scheduled);
+			running->previously_scheduled = 1;
+		}
+
 		if (!remaining_threads_blocked(running)) {
 			set_timer();
 		}
@@ -371,6 +378,26 @@ void print_app_stats(void) {
 
 /* Supporting Functions */
 /* ==================== */
+
+void recompute_benchmarks() {
+	assert(ended_tcbs->size);
+	assert(running);
+
+	const double num_microseconds_in_sec = 1000;
+	const double num_ns_in_microseconds = 1000000;
+
+	const double turnaround_time = 
+		(running->completion.tv_sec - running->arrival.tv_sec) * num_microseconds_in_sec + 
+		(running->completion.tv_nsec - running->arrival.tv_nsec) / num_ns_in_microseconds;
+
+	const double response_time = 
+		(running->first_scheduled.tv_sec - running->arrival.tv_sec) * num_microseconds_in_sec + 
+		(running->first_scheduled.tv_nsec - running->arrival.tv_nsec) / num_ns_in_microseconds;
+
+	double size_matters = (double) ended_tcbs->size;
+	avg_turn_time = (avg_turn_time * (size_matters - 1) + turnaround_time) / size_matters;
+	avg_resp_time = (avg_resp_time * (size_matters - 1) + response_time) / size_matters;
+}
 
 /* One shot timer that will send SIGPROF signal after TIME_QUANTUM microseconds. */
 void set_timer() {
@@ -542,7 +569,12 @@ void cleanup_library() {
 void clean_exited_worker_thread() {
 	while(1) {
 		++tot_cntx_switches; /* Worker ended and context switched to here. */
+		
+		clock_gettime(CLOCK_MONOTONIC, &running->completion);
 		insert(ended_tcbs, remove_from(tcbs, running->thread_id));
+		
+		// With each thread complete, we compute avg tt/rr times.
+		recompute_benchmarks();
 
 		/* The following alert call is necessary if worker_thread forgot to call worker_exit().*/
 		alert_waiting_threads(running->thread_id, NULL); // Never overwrite join return value. 

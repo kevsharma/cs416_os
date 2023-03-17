@@ -63,13 +63,14 @@
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ucontext.h>
 #include <assert.h>
-#include <sys/time.h>
 #include <signal.h>
 #include <string.h>
+#include <time.h>
 
 typedef unsigned int worker_t;
 typedef unsigned int worker_mutex_t;
@@ -81,6 +82,11 @@ typedef struct TCB {
 	worker_t		join_tid;		/* NONEXISTENT_THREAD if not currently waiting on another thread. */
 	void **			join_retval;	
 	worker_mutex_t	seeking_lock;	/* NONEXISTENT_MUTEX if not seeking to acquire a mutex. */
+
+    int previously_scheduled;
+    struct timespec arrival;
+    struct timespec first_scheduled;
+    struct timespec completion;
 } tcb; 
 
 typedef struct Node {
@@ -171,6 +177,8 @@ void print_app_stats(void);
 /* Helper Function Prototypes:
  * ==========================
  */
+
+void recompute_benchmarks();
 
 /* One shot timer that will send SIGPROF signal after TIME_QUANTUM microseconds. */
 void set_timer();
