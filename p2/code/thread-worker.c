@@ -270,17 +270,13 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 /* scheduler */
 static void schedule() {
 
-	round_robin_scheduler();
-	// int PSJF, MLFQ = 0;
-	// int sched = 1;
-
-	// if (sched == PSJF) {
-	// 	sched_psjf();
-	// } else if (sched == MLFQ) {
-	// 	sched_mlfq();
-	// } else {
-	// 	round_robin_scheduler();
-	// }
+	#ifndef MLFQ
+		round_robin_scheduler();
+		//sched_psjf();
+	#else 
+		round_robin_scheduler();
+		//sched_mlfq();
+	#endif
 }
 
 /** 
