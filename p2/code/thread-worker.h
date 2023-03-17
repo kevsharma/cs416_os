@@ -182,6 +182,7 @@ void recompute_benchmarks();
 
 /* One shot timer that will send SIGPROF signal after TIME_QUANTUM microseconds. */
 void set_timer();
+void reset_timer();
 
 /* Swaps the context to scheduler after a SIGPROF signal. */
 void timer_signal_handler(int signum);

@@ -325,6 +325,7 @@ static void round_robin_scheduler() {
 			running->previously_scheduled = 1;
 		}
 
+		reset_timer();
 		if (!remaining_threads_blocked(running)) {
 			set_timer();
 		}
@@ -394,6 +395,17 @@ void set_timer() {
 
 	timer->it_value.tv_sec = 0;
 	timer->it_value.tv_usec = TIME_QUANTUM;
+
+	setitimer(ITIMER_PROF, timer, NULL);
+}
+
+/* Eliminate timer */
+void reset_timer() {
+	timer->it_interval.tv_sec = 0;
+	timer->it_interval.tv_usec = 0;
+
+	timer->it_value.tv_sec = 0;
+	timer->it_value.tv_usec = 0;
 
 	setitimer(ITIMER_PROF, timer, NULL);
 }
@@ -566,6 +578,7 @@ void clean_exited_worker_thread() {
 		alert_waiting_threads(running->thread_id, NULL); // Never overwrite join return value. 
 	
 		running = NULL; // IMPORTANT FLAG so scheduler doesn't enqueue cleaned thread.
+		reset_timer(); // Ignore current timer if any.
 		++tot_cntx_switches;
 		swapcontext(cleanup, scheduler);
 	}
