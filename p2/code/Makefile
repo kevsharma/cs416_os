@@ -3,6 +3,8 @@ CFLAGS = -g -c
 AR = ar -rc
 RANLIB = ranlib
 
+SCHED = PSJF
+
 all: clean thread-worker.a
 
 thread-worker.a: thread-worker.o
