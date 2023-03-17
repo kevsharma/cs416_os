@@ -292,46 +292,42 @@ static void schedule() {
 */
 static void round_robin_scheduler() {
 	while(1) {
-		printf("INFO[schedule 1]: entered scheduler loop. Scheduled Queue: "); print_queue(q_scheduled);
+		// printf("INFO[schedule 1]: entered scheduler loop. Scheduled Queue: "); print_queue(q_scheduled);
 
 		// Insert newly arrived jobs into schedule queue.
 		while(!isEmpty(q_arrival)) {
-			print_queue(q_arrival); print_queue(q_scheduled);
+			// print_queue(q_arrival); print_queue(q_scheduled);
 			enqueue(q_scheduled, dequeue(q_arrival));
 		}
 
 		/* Scheduler logic: */
 		do {
 			if (running != NULL) { // dont enqueue terminated job freed up by cleanup context.
-				print_queue(q_scheduled);
+				// print_queue(q_scheduled);
 				enqueue(q_scheduled, running);
 			}
 
 			running = dequeue(q_scheduled);
 
-			print_queue(q_scheduled);
-			if(is_blocked(running)) 
-				printf("INFO[schedule 4]: skipped tid (%d) BCUZ BLOCKED\n", running->thread_id);
+			// print_queue(q_scheduled);
+			// if(is_blocked(running)) 
+			// 	printf("INFO[schedule 4]: skipped tid (%d) BCUZ BLOCKED\n", running->thread_id);
 
 		} while(is_blocked(running));
 		
-		printf("after descheduling: ");
-		print_queue(q_scheduled);
-		printf("INFO[schedule 5]: remaining threads blocked: (%d) | and current (%d) blocked - (%d)\n",
-			remaining_threads_blocked(running), running->thread_id, is_blocked(running));
+		// printf("after descheduling: ");
+		// print_queue(q_scheduled);
+		// printf("INFO[schedule 5]: remaining threads blocked: (%d) | and current (%d) blocked - (%d)\n",
+		// 	remaining_threads_blocked(running), running->thread_id, is_blocked(running));
 
 		if (!running->previously_scheduled) {
 			clock_gettime(CLOCK_MONOTONIC, &running->first_scheduled);
 			running->previously_scheduled = 1;
 		}
 
-		reset_timer();
-		if (!remaining_threads_blocked(running)) {
-			set_timer();
-		}
-
+		set_timer(!remaining_threads_blocked(running));
 		++tot_cntx_switches; 
-		printf("INFO[schedule 5]: Scheduling tid (%d)\n", running->thread_id);
+		// printf("INFO[schedule 5]: Scheduling tid (%d)\n", running->thread_id);
 		swapcontext(scheduler, running->uctx);
 	}
 }
@@ -364,7 +360,6 @@ void print_app_stats(void) {
 }
 
 
-
 /* Supporting Functions */
 /* ==================== */
 
@@ -389,31 +384,19 @@ void recompute_benchmarks() {
 }
 
 /* One shot timer that will send SIGPROF signal after TIME_QUANTUM microseconds. */
-void set_timer() {
+void set_timer(int to_set) {
 	timer->it_interval.tv_sec = 0;
 	timer->it_interval.tv_usec = 0;
 
 	timer->it_value.tv_sec = 0;
-	timer->it_value.tv_usec = TIME_QUANTUM;
+	timer->it_value.tv_usec = to_set ? TIME_QUANTUM : 0;
 
 	setitimer(ITIMER_PROF, timer, NULL);
 }
-
-/* Eliminate timer */
-void reset_timer() {
-	timer->it_interval.tv_sec = 0;
-	timer->it_interval.tv_usec = 0;
-
-	timer->it_value.tv_sec = 0;
-	timer->it_value.tv_usec = 0;
-
-	setitimer(ITIMER_PROF, timer, NULL);
-}
-
 
 /* Swaps the context to scheduler after a SIGPROF signal. */
 void timer_signal_handler(int signum) {
-	printf("RING RING -> Swapping to scheduler context\n");
+	// printf("RING RING -> Swapping to scheduler context\n");
 	++tot_cntx_switches;
 	swapcontext(running->uctx, scheduler);
 }
@@ -578,7 +561,6 @@ void clean_exited_worker_thread() {
 		alert_waiting_threads(running->thread_id, NULL); // Never overwrite join return value. 
 	
 		running = NULL; // IMPORTANT FLAG so scheduler doesn't enqueue cleaned thread.
-		reset_timer(); // Ignore current timer if any.
 		++tot_cntx_switches;
 		swapcontext(cleanup, scheduler);
 	}
