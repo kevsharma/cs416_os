@@ -111,12 +111,10 @@ int worker_join(worker_t thread, void **value_ptr) {
 	 * enters this function.
 	*/
 	if (waiting_on_tcb_already_ended) {
-		printf("INFO[worker_join]: %d is already done. so %d won't wait on it.\n", thread, running->thread_id);
 		if (value_ptr) {
 			*value_ptr = waiting_on_tcb_already_ended->ret_value;
 		}
 	} else {
-		printf("INFO[worker_join]: %d is going to wait on %d\n", running->thread_id, thread);
 		running->join_tid = thread;
 		running->join_retval = value_ptr; // alert function will modify this. 
 		++tot_cntx_switches;
@@ -146,8 +144,6 @@ int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t *mutexatt
 	mutex_item->holder_tid = NONEXISTENT_THREAD;
     mutex_item->next = mutexes->front;
     mutexes->front = mutex_item;
-
-	print_mutex_list(mutexes);
 
     // unblock signals.
 	sigprocmask(SIG_UNBLOCK,&set, NULL);
@@ -196,8 +192,6 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
 	mutex_node *m = fetch_from_mutexes(*mutex);
 	assert(m); // can't acquire an invalid node	
 	m->holder_tid = running->thread_id; // u can make this atomic. 
-
-	printf("mutex acquired successfully by %d\n", running->thread_id);
     
 	// unblock signals - finished accessing shared resource
 	sigprocmask(SIG_UNBLOCK,&set, NULL);
@@ -227,7 +221,6 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 	 * an increased number of context switches. (This preserves the illusion
 	 * of concurrency better and is more FAIR.)
 	*/
-	printf("mutex released successfully by %d\n", running->thread_id);
 	++tot_cntx_switches;
 	swapcontext(running->uctx, scheduler);
 	return 0;
@@ -250,9 +243,6 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 	mutex_node *front = mutexes->front;
     assert(front);
 
-	print_mutex_list(mutexes);
-	printf("Seeking to remove target wiht lock num: (%d) \n", *mutex);
-
     if (front->lock_num == *mutex) {
 		*mutex = NONEXISTENT_MUTEX;
         mutexes->front = front->next;
@@ -271,8 +261,6 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 			}
 		}
 	}
-
-	print_mutex_list(mutexes);
 
 	// Note that lock always initialized due to is_held_by assertion.
 	sigprocmask(SIG_UNBLOCK, &set, NULL);
@@ -553,8 +541,6 @@ void cleanup_library() {
 	free(scheduler);
 	free(cleanup->uc_stack.ss_sp);
 	free(cleanup);
-
-	printf("INFO[ATEXIT]: library cleaned.");
 }
 
 
@@ -645,7 +631,6 @@ void alert_waiting_threads(worker_t ended, void *ended_retval_ptr) {
 	while(ptr) {
 		if (ptr->data->join_tid == ended) {
 			ptr->data->join_tid = NONEXISTENT_THREAD; // No longer waiting.
-			printf("\n\n[ALERT]: %d alerted that %d ended.\n\n", ptr->data->thread_id, running->thread_id);
 
 			// Save data from exiting thread.
 			if (ended_retval_ptr != NULL) {
