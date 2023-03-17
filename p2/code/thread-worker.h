@@ -17,21 +17,6 @@
 /* To use Linux pthread Library in Benchmark, you have to comment the USE_WORKERS macro */
 #define USE_WORKERS 1
 
-/* include lib header files that you need here: */
-#include <unistd.h>
-#include <sys/syscall.h>
-#include <sys/types.h>
-#include <sys/time.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <ucontext.h>
-#include <assert.h>
-#include <signal.h>
-#include <string.h>
-#include <time.h>
-
-#define STACK_SIZE SIGSTKSZ
-
 /**
  * When the library is first used, this calling context populates
  * the running tcb struct's thread_id attribute with MAIN_THREAD.
@@ -73,6 +58,19 @@
  * TIME_QUANTUM is the time in ms that a thread will have before context is swapped to scheduler.
 */
 #define TIME_QUANTUM 10
+
+/* include lib header files that you need here: */
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#include <sys/time.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <ucontext.h>
+#include <assert.h>
+#include <signal.h>
+#include <string.h>
+#include <time.h>
 
 typedef unsigned int worker_t;
 typedef unsigned int worker_mutex_t;
