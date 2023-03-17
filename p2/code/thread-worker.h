@@ -181,7 +181,7 @@ void print_app_stats(void);
 void recompute_benchmarks();
 
 /* One shot timer that will send SIGPROF signal after TIME_QUANTUM microseconds. */
-void set_timer();
+void set_timer(int to_set);
 
 /* Swaps the context to scheduler after a SIGPROF signal. */
 void timer_signal_handler(int signum);
