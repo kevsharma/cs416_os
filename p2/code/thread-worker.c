@@ -75,6 +75,7 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 }
 
 int worker_yield() {
+	++tot_cntx_switches;
 	return swapcontext(running->uctx, scheduler);
 }
 
@@ -116,6 +117,7 @@ int worker_join(worker_t thread, void **value_ptr) {
 		printf("INFO[worker_join]: %d is going to wait on %d\n", running->thread_id, thread);
 		running->join_tid = thread;
 		running->join_retval = value_ptr; // alert function will modify this. 
+		++tot_cntx_switches;
 		swapcontext(running->uctx, scheduler); 
 	}
 
@@ -184,6 +186,7 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
     */
     while(!is_held_by(NONEXISTENT_THREAD, *mutex)) {
 		running->seeking_lock = *mutex;
+		++tot_cntx_switches;
 		swapcontext(running->uctx, scheduler);
 	}
 
@@ -321,6 +324,7 @@ static void round_robin_scheduler() {
 		if(tcbs->size > 1){
 			set_timer();
 		}
+		++tot_cntx_switches;
 		swapcontext(scheduler, running->uctx);
 	}
 }
@@ -372,6 +376,7 @@ void set_timer() {
 /* Swaps the context to scheduler after a SIGPROF signal. */
 void timer_signal_handler(int signum) {
 	printf("RING RING -> Swapping to scheduler context\n");
+	++tot_cntx_switches;
 	swapcontext(running->uctx, scheduler);
 }
 
@@ -525,12 +530,14 @@ void cleanup_library() {
  */
 void clean_exited_worker_thread() {
 	while(1) {
+		++tot_cntx_switches; /* Worker ended and context switched to here. */
 		insert(ended_tcbs, remove_from(tcbs, running->thread_id));
 
 		/* The following alert call is necessary if worker_thread forgot to call worker_exit().*/
 		alert_waiting_threads(running->thread_id, NULL); // Never overwrite join return value. 
 	
 		running = NULL; // IMPORTANT FLAG so scheduler doesn't enqueue cleaned thread.
+		++tot_cntx_switches;
 		swapcontext(cleanup, scheduler);
 	}
 }
