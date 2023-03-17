@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -g -w
 
-all:: parallel_cal vector_multiply external_cal test
+all:: clean parallel_cal vector_multiply external_cal test
 
 parallel_cal:
 	$(CC) $(CFLAGS) -pthread -o parallel_cal parallel_cal.c -L../ -lthread-worker
