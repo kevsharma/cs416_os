@@ -93,16 +93,20 @@ void worker_exit(void *value_ptr) {
 }
 
 int worker_join(worker_t thread, void **value_ptr) {
-	// block signals
+	// Synchronize access to shared resource ended_tcbs list
 	sigset_t set = sigset_init();
 	sigprocmask(SIG_SETMASK,&set,NULL);
+	
+	tcb *waiting_on_tcb_already_ended = contains(ended_tcbs, thread);
+	
+	// Completed using shared resource.
+	sigprocmask(SIG_UNBLOCK,&set, NULL);
 
 	/**
 	 * Assumptions must not be made about how the scheduler interleaves
 	 * execution of threads. Namely, `thread` could have completed before the caller
 	 * enters this function.
 	*/
-	tcb *waiting_on_tcb_already_ended = contains(ended_tcbs, thread);
 	if (waiting_on_tcb_already_ended) {
 		printf("INFO[worker_join]: %d is already done. so %d won't wait on it.\n", thread, running->thread_id);
 		if (value_ptr) {
@@ -112,12 +116,9 @@ int worker_join(worker_t thread, void **value_ptr) {
 		printf("INFO[worker_join]: %d is going to wait on %d\n", running->thread_id, thread);
 		running->join_tid = thread;
 		running->join_retval = value_ptr; // alert function will modify this. 
+		swapcontext(running->uctx, scheduler); 
 	}
 
-	// unblock signals
-	sigprocmask(SIG_UNBLOCK,&set, NULL);
-
-	swapcontext(running->uctx, scheduler); 
 	return 0;
 }
 
