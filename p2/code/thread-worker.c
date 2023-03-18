@@ -211,17 +211,6 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
     // unblock signals
 	sigprocmask(SIG_UNBLOCK, &set, NULL);
 
-	/**
-	 * There is a chance that all other threads were waiting on this thread
-	 * to unlock the mutex in which case the scheduler would have not set a 
-	 * timer. However, once the thread releases the lock, we must give the
-	 * other threads a fair chance to acquire the lock even if this means
-	 * an increased number of context switches. (This preserves the illusion
-	 * of concurrency better and is more FAIR.)
-	*/
-	if (at_least_one_other_thread_unblocked) {
-		worker_yield();
-	}
 	return 0;
 }
 
@@ -587,11 +576,11 @@ int is_blocked(tcb *thread) {
 	return is_waiting_on_a_thread(thread) || is_waiting_on_a_mutex(thread);
 }
 
-/* Returns 1 if all threads except the one to be scheduled are blocked, 0 otherwise. */
+/* Returns 1 if all threads except the one to be scheduled are waiting to join, 0 otherwise. */
 int remaining_threads_blocked(tcb *to_be_scheduled) {
 	Node *ptr = tcbs->front;
 	while (ptr) {
-		if (!is_blocked(ptr->data) && (ptr->data->thread_id != to_be_scheduled->thread_id)) {
+		if (!is_waiting_on_a_thread(ptr->data) && (ptr->data->thread_id != to_be_scheduled->thread_id)) {
 			return 0;
 		}
 		ptr = ptr->next;
