@@ -233,8 +233,11 @@ int remaining_threads_blocked();
  * by changing their seeking_lock. 
  * 
  * (See worker_mutex_lock for more details.)
+ * 
+ * broadcast returns 1 if at least one other thread was waiting
+ * on this mutex, 0 if no other threads were waiting on mutex.
 */
-void broadcast_lock_release(worker_mutex_t mutex);
+int broadcast_lock_release(worker_mutex_t mutex);
 
 /**
  * There may be a group of threads waiting for (joined on) the current thread

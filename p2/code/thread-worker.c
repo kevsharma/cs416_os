@@ -183,8 +183,7 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
     */
     while(!is_held_by(NONEXISTENT_THREAD, *mutex)) {
 		running->seeking_lock = *mutex;
-		++tot_cntx_switches;
-		swapcontext(running->uctx, scheduler);
+		worker_yield();
 	}
 
 	// now mutex not held by any thread so acquire.
@@ -207,7 +206,7 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 
 	// Release the lock.
 	(fetch_from_mutexes(*mutex))->holder_tid = NONEXISTENT_THREAD;
-	broadcast_lock_release(*mutex); // Some thread may no longer be blocked.
+	int at_least_one_other_thread_unblocked = broadcast_lock_release(*mutex); 
 
     // unblock signals
 	sigprocmask(SIG_UNBLOCK, &set, NULL);
@@ -220,8 +219,9 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 	 * an increased number of context switches. (This preserves the illusion
 	 * of concurrency better and is more FAIR.)
 	*/
-	++tot_cntx_switches;
-	swapcontext(running->uctx, scheduler);
+	if (at_least_one_other_thread_unblocked) {
+		worker_yield();
+	}
 	return 0;
 }
 
@@ -392,8 +392,7 @@ void set_timer(int to_set) {
 /* Swaps the context to scheduler after a SIGPROF signal. */
 void timer_signal_handler(int signum) {
 	// printf("RING RING -> Swapping to scheduler context\n");
-	++tot_cntx_switches;
-	swapcontext(running->uctx, scheduler);
+	worker_yield();
 }
 
 
@@ -603,14 +602,17 @@ int remaining_threads_blocked(tcb *to_be_scheduled) {
 	return 1;
 }
 
-void broadcast_lock_release(worker_mutex_t mutex) {
+int broadcast_lock_release(worker_mutex_t mutex) {
+	int result = 0;
     Node *ptr = tcbs->front;
 	while(ptr) {
-		worker_mutex_t *seeking = &(ptr->data->seeking_lock);
-		*seeking = (*seeking == mutex) ? NONEXISTENT_MUTEX : (*seeking);
-
+		if (ptr->data->seeking_lock == mutex) {
+			ptr->data->seeking_lock = NONEXISTENT_MUTEX;
+			result = 1;
+		}
 		ptr = ptr->next;
 	}
+	return result;
 }
 
 
