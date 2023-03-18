@@ -77,8 +77,16 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 }
 
 int worker_yield() {
-	// time quantum (milliseconds) - 
-	running->quantum_amt_used = 5; // set this appropriately.	
+	const double num_microseconds_in_sec = 1000;
+	const double num_ns_in_microseconds = 1000000;
+
+	struct timespec curr_time;
+	clock_gettime(CLOCK_MONOTONIC, &curr_time);
+
+	running->quantum_amt_used += 
+		(curr_time.tv_sec - running->time_of_last_scheduling.tv_sec) * num_microseconds_in_sec + 
+		(curr_time.tv_nsec - running->time_of_last_scheduling.tv_nsec) / num_ns_in_microseconds;
+	
 	return swapcontext(running->uctx, scheduler);
 }
 
@@ -259,10 +267,10 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 /* scheduler */
 static void schedule() {
 	#ifndef MLFQ
-		insert_by_usage(tcbs, running);
-		//sched_psjf();
-	#else 
 		sched_psjf();
+	#else 
+		insert_by_usage(tcbs, running);
+		sched_mlfq();
 	#endif
 }
 
@@ -279,6 +287,13 @@ static void sched_psjf() {
 
 		// Enqueue if worker didn't get cleaned.
 		if (running) {
+			// Time Quantum information:
+			if (running->time_quantum_used_up_fully) { // Preempted because used up time quantum
+				running->time_quantum_used_up_fully = 0;
+				running->quantum_amt_used = 0;
+			}
+
+			// put the worker into appropriate position (ascending by runtime)
 			insert_by_usage(tcbs, running);
 		}
 		
@@ -287,13 +302,16 @@ static void sched_psjf() {
 
 		// Perform setup before scheduling next worker:
 		if (!running->previously_scheduled) {
+			// Being scheduled for the first time. Used in Response time metric.
 			clock_gettime(CLOCK_MONOTONIC, &running->first_scheduled);
 			running->previously_scheduled = 1;
 		}
 		
+		running->quantum_amt_used = running->quantum_amt_used >= TIME_QUANTUM ? 0 : 
+				running->quantum_amt_used;
+		set_timer(!remaining_threads_blocked(running), running->quantum_amt_used);
+
 		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
-		set_timer(!remaining_threads_blocked(running));
-		
 		++tot_cntx_switches; 
 		swapcontext(scheduler, running->uctx);
 	}
@@ -342,12 +360,12 @@ void recompute_benchmarks() {
 }
 
 /* One shot timer that will send SIGPROF signal after TIME_QUANTUM microseconds. */
-void set_timer(int to_set) {
+void set_timer(int to_set, int remaining) {
 	timer->it_interval.tv_sec = 0;
 	timer->it_interval.tv_usec = 0;
 
 	timer->it_value.tv_sec = 0;
-	timer->it_value.tv_usec = to_set ? TIME_QUANTUM : 0;
+	timer->it_value.tv_usec = to_set ? (TIME_QUANTUM - remaining) : 0;
 
 	setitimer(ITIMER_PROF, timer, NULL);
 }
@@ -357,7 +375,6 @@ void timer_signal_handler(int signum) {
 	// printf("RING RING -> Swapping to scheduler context\n");
 	running->time_quantum_used_up_fully = 1;
 	running->quantums_elapsed += 1;
-	running->quantum_amt_used = 0;
 	swapcontext(running->uctx, scheduler);
 }
 
@@ -456,9 +473,11 @@ void cleanup_library() {
 	free(timer);
 	free(sa);
 
-	/* Remove main from scheduled queue and tcbs list.*/
-	// main already removed lol //running = dequeue(q_scheduled);	// Empties scheduled list since last thread.
-	remove_from(tcbs, MAIN_THREAD); // Empties tcbs list since last thread.
+	// PSJF removed MAIN because tcbs list functions as a queue.
+	#ifndef PSJF
+		remove_from(tcbs, MAIN_THREAD); // Empties tcbs list since last thread.
+	#endif
+
 	free(running->uctx);
 	free(running);
 	
