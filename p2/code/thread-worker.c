@@ -27,7 +27,7 @@ static worker_t *last_created_worker_tid; /* Monotonically increasing counter. *
 static worker_mutex_t *current_mutex_num; /* Monotonically increasing counter. */
 static mutex_list *mutexes; /* Currently initialized mutexes. */
 
-static Queue *q_arrival, *q_scheduled;
+static Queue *q_arrival;
 static List *tcbs, *ended_tcbs;
 
 static tcb *running; /* Currently Executing thread. running is NULL if reaped.*/
@@ -67,9 +67,9 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 	
 	new_tcb->previously_scheduled = 0;
 	clock_gettime(CLOCK_MONOTONIC, &new_tcb->arrival);
+	
 	enqueue(q_arrival, new_tcb);
-	insert(tcbs, new_tcb);
-
+	
 	// Finished accessing shared resources.
 	sigprocmask(SIG_UNBLOCK, &set, NULL);
 
@@ -77,7 +77,8 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 }
 
 int worker_yield() {
-	++tot_cntx_switches;
+	// time quantum (milliseconds) - 
+	running->quantum_amt_used = 5; // set this appropriately.	
 	return swapcontext(running->uctx, scheduler);
 }
 
@@ -257,72 +258,45 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 
 /* scheduler */
 static void schedule() {
-
 	#ifndef MLFQ
-		round_robin_scheduler();
+		insert_by_usage(tcbs, running);
 		//sched_psjf();
 	#else 
-		round_robin_scheduler();
-		//sched_mlfq();
+		sched_psjf();
 	#endif
 }
 
-/** 
- * Pre-emptive round_robin
- * This function is invoked when scheduler context first runs.
- * When main creates a thread, the library's associated mechanisms are initialized;
- * when main later waits on a thread (via a call to worker_join), the scheduler 
- * is afforded the chance to execute this function for the first time.
-*/
-static void round_robin_scheduler() {
+/* Pre-emptive Shortest Job First (POLICY_PSJF) scheduling algorithm */
+static void sched_psjf() {
 	while(1) {
-		// printf("INFO[schedule 1]: entered scheduler loop. Scheduled Queue: "); print_queue(q_scheduled);
+		++tot_cntx_switches;
 
-		// Insert newly arrived jobs into schedule queue.
+		// Handle new arrivals.
 		while(!isEmpty(q_arrival)) {
-			// print_queue(q_arrival); print_queue(q_scheduled);
-			enqueue(q_scheduled, dequeue(q_arrival));
+			tcb *new_arrival = dequeue(q_arrival);
+			insert_by_usage(tcbs, new_arrival);
 		}
 
-		/* Scheduler logic: */
-		do {
-			if (running != NULL) { // dont enqueue terminated job freed up by cleanup context.
-				// print_queue(q_scheduled);
-				enqueue(q_scheduled, running);
-			}
-
-			running = dequeue(q_scheduled);
-
-			// print_queue(q_scheduled);
-			// if(is_blocked(running)) 
-			// 	printf("INFO[schedule 4]: skipped tid (%d) BCUZ BLOCKED\n", running->thread_id);
-
-		} while(is_blocked(running));
+		// Enqueue if worker didn't get cleaned.
+		if (running) {
+			insert_by_usage(tcbs, running);
+		}
 		
-		// printf("after descheduling: ");
-		// print_queue(q_scheduled);
-		// printf("INFO[schedule 5]: remaining threads blocked: (%d) | and current (%d) blocked - (%d)\n",
-		// 	remaining_threads_blocked(running), running->thread_id, is_blocked(running));
+		// Find next worker with lowest runtime so far.
+		running = remove_from(tcbs, find_first_unblocked_thread(tcbs)->thread_id);
 
+		// Perform setup before scheduling next worker:
 		if (!running->previously_scheduled) {
 			clock_gettime(CLOCK_MONOTONIC, &running->first_scheduled);
 			running->previously_scheduled = 1;
 		}
-
+		
+		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
 		set_timer(!remaining_threads_blocked(running));
+		
 		++tot_cntx_switches; 
-		// printf("INFO[schedule 5]: Scheduling tid (%d)\n", running->thread_id);
 		swapcontext(scheduler, running->uctx);
 	}
-}
-
-
-/* Pre-emptive Shortest Job First (POLICY_PSJF) scheduling algorithm */
-static void sched_psjf() {
-	// - your own implementation of PSJF
-	// (feel free to modify arguments and return types)
-
-	// YOUR CODE HERE
 }
 
 
@@ -381,7 +355,10 @@ void set_timer(int to_set) {
 /* Swaps the context to scheduler after a SIGPROF signal. */
 void timer_signal_handler(int signum) {
 	// printf("RING RING -> Swapping to scheduler context\n");
-	worker_yield();
+	running->time_quantum_used_up_fully = 1;
+	running->quantums_elapsed += 1;
+	running->quantum_amt_used = 0;
+	swapcontext(running->uctx, scheduler);
 }
 
 
@@ -414,11 +391,6 @@ void init_library() {
 	q_arrival->size = 0;
 	q_arrival->rear = NULL;
 
-	assert(isUninitialized(q_scheduled));
-	q_scheduled = (Queue *) malloc(sizeof(Queue));
-	q_scheduled->size = 0;
-	q_scheduled->rear = NULL;
-	
 	// Initialize the tcbs list. 
 	assert(isUninitializedList(tcbs));
 	tcbs = (List *) malloc(sizeof(List));
@@ -464,9 +436,12 @@ void init_library() {
 	running = (tcb *) malloc(sizeof(tcb));
 	running->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
 	running->thread_id = MAIN_THREAD;
+	running->join_tid = NONEXISTENT_THREAD;
+	running->seeking_lock = NONEXISTENT_MUTEX;
+	running->quantums_elapsed = 0;
+	running->quantum_amt_used = 0;
+	running->time_quantum_used_up_fully = 0;
 	getcontext(running->uctx);
-
-	insert(tcbs, running);
 
 	// Register atexit() function to clean up supporting mechanisms.
 	if (atexit(cleanup_library) != 0) {
@@ -490,8 +465,6 @@ void cleanup_library() {
 	/* Free all allocated library mechanisms. */
 	assert(isEmpty(q_arrival));
 	free(q_arrival);
-	assert(isEmpty(q_scheduled));
-	free(q_scheduled);
 
 	assert(isEmptyList(tcbs));
 	free(tcbs);
@@ -532,19 +505,22 @@ void cleanup_library() {
  */
 void clean_exited_worker_thread() {
 	while(1) {
-		++tot_cntx_switches; /* Worker ended and context switched to here. */
-		
 		clock_gettime(CLOCK_MONOTONIC, &running->completion);
-		insert(ended_tcbs, remove_from(tcbs, running->thread_id));
+
+		insert_at_front(ended_tcbs, running);
+		
+		// PSJF would have removed, but MLFQ wouldn't have.
+		if (contains(tcbs, running->thread_id)) {
+			remove_from(tcbs, running->thread_id);
+		}
 		
 		// With each thread complete, we compute avg tt/rr times.
 		recompute_benchmarks();
 
 		/* The following alert call is necessary if worker_thread forgot to call worker_exit().*/
 		alert_waiting_threads(running->thread_id, NULL); // Never overwrite join return value. 
-	
-		running = NULL; // IMPORTANT FLAG so scheduler doesn't enqueue cleaned thread.
-		++tot_cntx_switches;
+
+		running = NULL; // IMPORTANT FLAG for scheduler;
 		swapcontext(cleanup, scheduler);
 	}
 }
@@ -697,17 +673,63 @@ int isEmptyList(List *lst_ptr) {
 }
 
 
+/* Returns 1 if to_be_inserted has less usage than curr, 0 otherwise. */
+int compare_usage(tcb *to_be_inserted, tcb *curr) {
+	return to_be_inserted->quantums_elapsed < curr->quantums_elapsed 
+		|| (to_be_inserted->quantums_elapsed == curr->quantums_elapsed &&
+			to_be_inserted->quantum_amt_used <= curr->quantum_amt_used);
+}
+
 /* Inserts to front of list. */
-void insert(List *lst_ptr, tcb *data) {
+void insert_by_usage(List *lst_ptr, tcb *to_be_inserted) {
     assert(!isUninitializedList(lst_ptr));
+	assert(!contains(lst_ptr, to_be_inserted->thread_id));
 
     Node *item = (Node *) malloc(sizeof(Node));
-    item->data = data;
+    item->data = to_be_inserted;
+	item->next = NULL;
+
+	if (isEmptyList(lst_ptr)) {
+		lst_ptr->front = item;
+	} else if (lst_ptr->size == 1) {
+		if (compare_usage(to_be_inserted, lst_ptr->front->data)) {
+			item->next = lst_ptr->front;
+			lst_ptr->front = item;
+		} else {
+			lst_ptr->front->next = item;
+		}
+	} else {
+		// list has greater than 2 elements.
+		Node *ptr = lst_ptr->front->next;
+		Node *prev = lst_ptr->front;
+		int position_found = 0;
+		for (; ptr; ptr = ptr->next, prev = prev->next) {
+			if (compare_usage(to_be_inserted, ptr->data)) {
+				prev->next = item;
+				item->next = ptr;
+				position_found = 1;
+				break;
+			}
+		}
+
+		if (!position_found) { 
+			prev->next = item; // appended to list.
+		}
+	}
+
+	assert(contains(lst_ptr, to_be_inserted->thread_id));
+    ++(lst_ptr->size);
+}
+
+void insert_at_front(List *lst_ptr, tcb *to_be_inserted) {
+	assert(!isUninitializedList(lst_ptr));
+
+    Node *item = (Node *) malloc(sizeof(Node));
+    item->data = to_be_inserted;
     item->next = lst_ptr->front;
     ++(lst_ptr->size);
     lst_ptr->front = item;
 }
-
 
 /* Returns valid ptr if the list contains the worker, else returns NULL.*/
 tcb* contains(List *lst_ptr, worker_t target) {
@@ -756,6 +778,23 @@ tcb* remove_from(List *lst_ptr, worker_t target) {
     }
 
     return target_tcb;
+}
+
+
+tcb* find_first_unblocked_thread(List *lst_ptr) {
+	tcb *first_unblocked_thread = NULL;
+	
+	Node *ptr;
+	for (ptr = lst_ptr->front; ptr; ptr = ptr->next) {
+		if (!is_blocked(ptr->data)) {
+			first_unblocked_thread = ptr->data;
+			break;
+		}
+	}
+
+	// Must exist at least one unblocked thread.
+	assert(first_unblocked_thread);
+    return first_unblocked_thread;
 }
 
 
