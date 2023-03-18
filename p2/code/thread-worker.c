@@ -117,8 +117,7 @@ int worker_join(worker_t thread, void **value_ptr) {
 	} else {
 		running->join_tid = thread;
 		running->join_retval = value_ptr; // alert function will modify this. 
-		++tot_cntx_switches;
-		swapcontext(running->uctx, scheduler); 
+		worker_yield();
 	}
 
 	return 0;
