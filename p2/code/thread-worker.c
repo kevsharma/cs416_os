@@ -206,7 +206,7 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 
 	// Release the lock.
 	(fetch_from_mutexes(*mutex))->holder_tid = NONEXISTENT_THREAD;
-	int at_least_one_other_thread_unblocked = broadcast_lock_release(*mutex); 
+	broadcast_lock_release(*mutex); 
 
     // unblock signals
 	sigprocmask(SIG_UNBLOCK, &set, NULL);

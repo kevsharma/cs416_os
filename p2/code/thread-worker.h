@@ -57,7 +57,7 @@
 /**
  * TIME_QUANTUM is the time in ms that a thread will have before context is swapped to scheduler.
 */
-#define TIME_QUANTUM 10
+#define TIME_QUANTUM 10000
 
 /**
  * STACK_SIZE is the size of the stack that will be allocated for the context
