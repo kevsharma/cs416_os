@@ -3,6 +3,8 @@ CFLAGS = -g -c
 AR = ar -rc
 RANLIB = ranlib
 
+#SCHED = PSJF default value for SCHED so we can just type make
+
 all: clean thread-worker.a
 
 thread-worker.a: thread-worker.o
