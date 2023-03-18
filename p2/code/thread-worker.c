@@ -105,15 +105,10 @@ void worker_exit(void *value_ptr) {
 }
 
 int worker_join(worker_t thread, void **value_ptr) {
-	// Synchronize access to shared resource ended_tcbs list
-	sigset_t set = sigset_init();
-	sigprocmask(SIG_SETMASK,&set,NULL);
-	
+	// Perchance `thread` already finished: ended_tcbs is append only so no need
+	// to synchronize access to it.
 	tcb *waiting_on_tcb_already_ended = contains(ended_tcbs, thread);
 	
-	// Completed using shared resource.
-	sigprocmask(SIG_UNBLOCK,&set, NULL);
-
 	/**
 	 * Assumptions must not be made about how the scheduler interleaves
 	 * execution of threads. Namely, `thread` could have completed before the caller
