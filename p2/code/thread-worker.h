@@ -59,6 +59,11 @@
 */
 #define TIME_QUANTUM 10
 
+/**
+ * STACK_SIZE is the size of the stack that will be allocated for the context
+*/
+#define STACK_SIZE 16384
+
 /* include lib header files that you need here: */
 #include <unistd.h>
 #include <sys/syscall.h>

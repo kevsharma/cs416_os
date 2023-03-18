@@ -54,8 +54,8 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 	new_tcb->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
 	getcontext(new_tcb->uctx); // heap space stores context
 	new_tcb->uctx->uc_link = cleanup; // all workers must flow into cleanup
-	new_tcb->uctx->uc_stack.ss_size = 4096;
-	new_tcb->uctx->uc_stack.ss_sp = malloc(4096);
+	new_tcb->uctx->uc_stack.ss_size = STACK_SIZE;
+	new_tcb->uctx->uc_stack.ss_sp = malloc(STACK_SIZE);
 	makecontext(new_tcb->uctx, (void *) function, 1, arg); 
 
 	// Synchronize access to shared resources.
@@ -438,16 +438,16 @@ void init_library() {
 	// Create scheduler context
 	getcontext(scheduler);
 	scheduler->uc_link = NULL; // no longer cleanup. see atexit registered function.
-	scheduler->uc_stack.ss_size = 4096;
-	scheduler->uc_stack.ss_sp = malloc(4096);
+	scheduler->uc_stack.ss_size = STACK_SIZE;
+	scheduler->uc_stack.ss_sp = malloc(STACK_SIZE);
 	scheduler->uc_sigmask = sigset_init();
 	makecontext(scheduler, schedule, 0);
 
 	// Create cleanup context
 	getcontext(cleanup);
 	cleanup->uc_link = NULL;
-	cleanup->uc_stack.ss_size = 4096;
-	cleanup->uc_stack.ss_sp = malloc(4096);
+	cleanup->uc_stack.ss_size = STACK_SIZE;
+	cleanup->uc_stack.ss_sp = malloc(STACK_SIZE);
 	cleanup->uc_sigmask = sigset_init();
 	makecontext(cleanup, clean_exited_worker_thread, 0);
 
