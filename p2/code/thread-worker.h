@@ -88,6 +88,13 @@ typedef struct TCB {
 	void **			join_retval;	
 	worker_mutex_t	seeking_lock;	/* NONEXISTENT_MUTEX if not seeking to acquire a mutex. */
 
+    /* Attributes used by Scheduler */
+    unsigned int    quantums_elapsed;
+    unsigned int    quantum_amt_used;
+    struct timespec time_of_last_scheduling;
+    int             time_quantum_used_up_fully; /* For use in MLFQ*/
+
+    /* Attributes used for Benchmarks */
     int previously_scheduled;
     struct timespec arrival;
     struct timespec first_scheduled;
@@ -186,7 +193,7 @@ void print_app_stats(void);
 void recompute_benchmarks();
 
 /* One shot timer that will send SIGPROF signal after TIME_QUANTUM microseconds. */
-void set_timer(int to_set);
+void set_timer(int to_set, int remaining);
 
 /* Swaps the context to scheduler after a SIGPROF signal. */
 void timer_signal_handler(int signum);
@@ -270,11 +277,15 @@ mutex_node* fetch_from_mutexes(worker_mutex_t target);
 
 int isUninitializedList(List *lst_ptr);
 int isEmptyList(List *lst_ptr);
-void insert(List *lst_ptr, tcb *data);
+int compare_usage(tcb *to_be_inserted, tcb *curr);
+void insert_by_usage(List *lst_ptr, tcb *to_be_inserted);
+void insert_at_front(List *lst_ptr, tcb *to_be_inserted);
 tcb* contains(List *lst_ptr, worker_t target);
 tcb* remove_from(List *lst_ptr, worker_t target);
+tcb* find_first_unblocked_thread(List *lst_ptr);
 
 int isUninitialized(Queue *q_ptr);
 int isEmpty(Queue *q_ptr);
 void enqueue(Queue* q_ptr, tcb *data);
 tcb* dequeue(Queue *q_ptr);
+
