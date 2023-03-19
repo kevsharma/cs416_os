@@ -291,14 +291,7 @@ static void sched_psjf() {
 			insert_by_usage(tcbs, new_arrival);
 		}
 
-		// Enqueue if worker didn't get cleaned.
-		if (running) {
-			// Time Quantum information:
-			if (running->time_quantum_used_up_fully) { // Preempted because used up time quantum
-				running->time_quantum_used_up_fully = 0;
-				running->quantum_amt_used = 0;
-			}
-
+		if (running) { 	// Enqueue if worker didn't get cleaned.
 			// put the worker into appropriate position (ascending by runtime)
 			insert_by_usage(tcbs, running);
 		}
