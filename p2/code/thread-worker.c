@@ -77,16 +77,22 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 }
 
 int worker_yield() {
-	const double num_microseconds_in_sec = 1000;
-	const double num_ns_in_microseconds = 1000000;
-
 	struct timespec curr_time;
 	clock_gettime(CLOCK_MONOTONIC, &curr_time);
 
+	const double num_us_in_sec = 1000000;
+	const double num_ns_in_us = 1000;
+
 	running->quantum_amt_used += 
-		(curr_time.tv_sec - running->time_of_last_scheduling.tv_sec) * num_microseconds_in_sec + 
-		(curr_time.tv_nsec - running->time_of_last_scheduling.tv_nsec) / num_ns_in_microseconds;
+		(curr_time.tv_sec - running->time_of_last_scheduling.tv_sec) * num_us_in_sec + 
+		(curr_time.tv_nsec - running->time_of_last_scheduling.tv_nsec) / num_ns_in_us;
 	
+	if (running->quantum_amt_used >= TIME_QUANTUM) {
+		running->time_quantum_used_up_fully = 1;
+		running->quantums_elapsed += 1;
+		running->quantum_amt_used = 0;
+	}
+
 	return swapcontext(running->uctx, scheduler);
 }
 
@@ -307,8 +313,6 @@ static void sched_psjf() {
 			running->previously_scheduled = 1;
 		}
 		
-		running->quantum_amt_used = running->quantum_amt_used >= TIME_QUANTUM ? 0 : 
-				running->quantum_amt_used;
 		set_timer(!remaining_threads_blocked(running), running->quantum_amt_used);
 
 		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
@@ -375,6 +379,7 @@ void timer_signal_handler(int signum) {
 	// printf("RING RING -> Swapping to scheduler context\n");
 	running->time_quantum_used_up_fully = 1;
 	running->quantums_elapsed += 1;
+	running->quantum_amt_used = 0;
 	swapcontext(running->uctx, scheduler);
 }
 
