@@ -325,12 +325,10 @@ tcb* first_unblocked_in_queue(Queue *q){
 	int size = q->size;
 	for(int i = 0; i < size; ++i){
 		curr = dequeue(q);
-		printf("curr tid: %d\n", curr->thread_id);
 		if(is_blocked(curr)){
 			enqueue(q,curr);
 		}
 		else{
-			printf("returning tid: %d", curr->thread_id);
 			return curr;
 		}
 	}
@@ -343,7 +341,6 @@ void get_tcb_mlfq(){
 	if (running != NULL) { // dont enqueue terminated job freed up by cleanup context.
 		int priority_val = running->prev_priority_level;
 		if (running->time_quantum_used_up_fully) { // Preempted because used up time quantum
-			printf("depriority tid: %d\n",running->thread_id);
 			running->time_quantum_used_up_fully = 0;
 			running->quantum_amt_used = 0;
 			priority_val = (running->prev_priority_level == (QUEUE_LEVELS - 1)) ? running->prev_priority_level : ++(running->prev_priority_level); //if time quantum is used we need to downgrade the current tcb
@@ -410,9 +407,7 @@ static void sched_mlfq() {
 			enqueue(all_queue[0],dequeue(q_arrival)); //adds all arrived tcb to the highest priority
 		}
 
-		printf("currently running %d\n", running->thread_id);
 		get_tcb_mlfq();
-		printf("got this from the func tid: %d\n", running->thread_id);
 
 		// Perform setup before scheduling next worker:
 		if (!running->previously_scheduled) {
@@ -420,6 +415,7 @@ static void sched_mlfq() {
 			clock_gettime(CLOCK_MONOTONIC, &running->first_scheduled);
 			running->previously_scheduled = 1;
 		}
+
 
 		set_timer(!remaining_threads_blocked(running), running->quantum_amt_used);
 
@@ -464,7 +460,6 @@ void recompute_benchmarks() {
 
 /* One shot timer that will send SIGPROF signal after TIME_QUANTUM microseconds. */
 void set_timer(int to_set, int remaining) {
-	printf("to_set :%d \n", to_set);
 	timer->it_interval.tv_sec = 0;
 	timer->it_interval.tv_usec = 0;
 
