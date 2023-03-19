@@ -297,7 +297,8 @@ tcb* contains(List *lst_ptr, worker_t target);
 tcb* remove_from(List *lst_ptr, worker_t target);
 tcb* find_first_unblocked_thread(List *lst_ptr);
 
-tcb* get_tcb_mlfq();
+tcb* first_unblocked_in_queue(Queue *q);
+void get_tcb_mlfq();
 void boost_all_queue();
 
 int isUninitialized(Queue *q_ptr);

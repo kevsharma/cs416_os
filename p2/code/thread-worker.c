@@ -318,30 +318,48 @@ static void sched_psjf() {
 	}
 }
 
-/* Returns what thread to run accord to mlfq */
-tcb* get_tcb_mlfq(){
-	int curr_level = 0;
-    tcb *ret_val;
-    for(curr_level = 0; curr_level < QUEUE_LEVELS; ++curr_level){
-		while(!isEmpty(all_queue[curr_level])){						//this is the same rr logic previously implemented
-			do {
-                if (running != NULL) { // dont enqueue terminated job freed up by cleanup context.
-                    int priority_val = running->prev_priority_level;
-                    if (running->time_quantum_used_up_fully) { // Preempted because used up time quantum
-                        running->time_quantum_used_up_fully = 0;
-                        running->quantum_amt_used = 0;
-                        priority_val = (running->prev_priority_level == (QUEUE_LEVELS - 1)) ? running->prev_priority_level : ++(running->prev_priority_level); //if time quantum is used we need to downgrade the current tcb
-			        }
-                    enqueue(all_queue[priority_val], running);
-                }
-
-                ret_val = dequeue(all_queue[curr_level]);
-
-		    } while(is_blocked(ret_val));
-			return ret_val;
-		}                                         
+// Returns first unblocked in the queue
+tcb* first_unblocked_in_queue(Queue *q){
+	print_queue(q);
+	tcb *curr;
+	int size = q->size;
+	for(int i = 0; i < size; ++i){
+		curr = dequeue(q);
+		printf("curr tid: %d\n", curr->thread_id);
+		if(is_blocked(curr)){
+			enqueue(q,curr);
+		}
+		else{
+			printf("returning tid: %d", curr->thread_id);
+			return curr;
+		}
 	}
-	return NULL; //should't reach here as there will be a thread that will be unblocked
+	return NULL;
+}
+
+/* Returns what thread to run accord to mlfq */
+void get_tcb_mlfq(){
+	// add current running in the right priority level queue
+	if (running != NULL) { // dont enqueue terminated job freed up by cleanup context.
+		int priority_val = running->prev_priority_level;
+		if (running->time_quantum_used_up_fully) { // Preempted because used up time quantum
+			printf("depriority tid: %d\n",running->thread_id);
+			running->time_quantum_used_up_fully = 0;
+			running->quantum_amt_used = 0;
+			priority_val = (running->prev_priority_level == (QUEUE_LEVELS - 1)) ? running->prev_priority_level : ++(running->prev_priority_level); //if time quantum is used we need to downgrade the current tcb
+		}
+		enqueue(all_queue[priority_val], running);
+	}
+	
+	//search until we find a tcb that is not blocked
+    for(int curr_level = 0; curr_level < QUEUE_LEVELS; ++curr_level){
+		//running will be set to first tcb unblocked in this queue or NULL
+		running = first_unblocked_in_queue(all_queue[curr_level]);
+		//If the running is not NULL get out of the function
+		if(running){
+			break;
+		}                                      
+	}
 }
 
 /* This functions boosts all tcb to top and also resets all scheduler attributes*/
@@ -353,6 +371,7 @@ void boost_all_queue(){
 			tcb *curr_tcb = dequeue(all_queue[curr_level]);
 
 			//resets all information back to default/0
+			//TODO: CHECK if we reset the value if tcb are boosted
 			curr_tcb->quantum_amt_used = 0;
 			curr_tcb->time_quantum_used_up_fully = 0;
 			curr_tcb->prev_priority_level = 0;
@@ -377,21 +396,23 @@ static void sched_mlfq() {
 		 * Gets time of how much time was spent after mlfq was first called/reset 
 		 * time_mlfq_ran is in micro-seconds
 		*/
-		const double time_mlfq_ran = 
-		(mlfq_schedule_time.tv_sec - curr_time.tv_sec) * 1000000 + 
-		(mlfq_schedule_time.tv_nsec - curr_time.tv_nsec) / 1000;
+		// const double time_mlfq_ran = 
+		// (mlfq_schedule_time.tv_sec - curr_time.tv_sec) * 1000000 + 
+		// (mlfq_schedule_time.tv_nsec - curr_time.tv_nsec) / 1000;
 
 		// BOOST_TIME is the S value in mlfq if we are greater than S we boost all tcb up
-		if(time_mlfq_ran >= BOOST_TIME){
-			boost_all_queue();
-			clock_gettime(CLOCK_MONOTONIC, &mlfq_schedule_time);	//resets time so we can boost again in future
-		}
+		// if(time_mlfq_ran >= BOOST_TIME){
+		// 	boost_all_queue();
+		// 	clock_gettime(CLOCK_MONOTONIC, &mlfq_schedule_time);	//resets time so we can boost again in future
+		// }
 
 		while(!isEmpty(q_arrival)) {
 			enqueue(all_queue[0],dequeue(q_arrival)); //adds all arrived tcb to the highest priority
 		}
 
-		running = get_tcb_mlfq();
+		printf("currently running %d\n", running->thread_id);
+		get_tcb_mlfq();
+		printf("got this from the func tid: %d\n", running->thread_id);
 
 		// Perform setup before scheduling next worker:
 		if (!running->previously_scheduled) {
@@ -443,6 +464,7 @@ void recompute_benchmarks() {
 
 /* One shot timer that will send SIGPROF signal after TIME_QUANTUM microseconds. */
 void set_timer(int to_set, int remaining) {
+	printf("to_set :%d \n", to_set);
 	timer->it_interval.tv_sec = 0;
 	timer->it_interval.tv_usec = 0;
 
