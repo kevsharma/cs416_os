@@ -29,12 +29,16 @@ static mutex_list *mutexes; /* Currently initialized mutexes. */
 
 static Queue *q_arrival;
 static List *tcbs, *ended_tcbs;
+static Queue **all_queue;
 
 static tcb *running; /* Currently Executing thread. running is NULL if reaped.*/
 
 /* Preemption mechanisms: */
 static struct itimerval *timer;
 static struct sigaction *sa;
+
+/* Stores the time when mlfq is first started */
+static struct timespec mlfq_schedule_time;
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -314,13 +318,94 @@ static void sched_psjf() {
 	}
 }
 
+/* Returns what thread to run accord to mlfq */
+tcb* get_tcb_mlfq(){
+	int curr_level = 0;
+    tcb *ret_val;
+    for(curr_level = 0; curr_level < QUEUE_LEVELS; ++curr_level){
+		while(!isEmpty(all_queue[curr_level])){						//this is the same rr logic previously implemented
+			do {
+                if (running != NULL) { // dont enqueue terminated job freed up by cleanup context.
+                    int priority_val = running->prev_priority_level;
+                    if (running->time_quantum_used_up_fully) { // Preempted because used up time quantum
+                        running->time_quantum_used_up_fully = 0;
+                        running->quantum_amt_used = 0;
+                        priority_val = (running->prev_priority_level == (QUEUE_LEVELS - 1)) ? running->prev_priority_level : ++(running->prev_priority_level); //if time quantum is used we need to downgrade the current tcb
+			        }
+                    enqueue(all_queue[priority_val], running);
+                }
+
+                ret_val = dequeue(all_queue[curr_level]);
+
+		    } while(is_blocked(ret_val));
+			return ret_val;
+		}                                         
+	}
+	return NULL; //should't reach here as there will be a thread that will be unblocked
+}
+
+/* This functions boosts all tcb to top and also resets all scheduler attributes*/
+void boost_all_queue(){
+	int curr_level = 0;
+	for(curr_level = 0; curr_level < QUEUE_LEVELS; ++curr_level){
+		while(!isEmpty(all_queue[curr_level])){
+			//Get current tcb to reset attributes
+			tcb *curr_tcb = dequeue(all_queue[curr_level]);
+
+			//resets all information back to default/0
+			curr_tcb->quantum_amt_used = 0;
+			curr_tcb->time_quantum_used_up_fully = 0;
+			curr_tcb->prev_priority_level = 0;
+
+			//add it back into top priority queue
+			enqueue(all_queue[0],curr_tcb);
+		}
+	}
+}
 
 /* Preemptive MLFQ scheduling algorithm */
 static void sched_mlfq() {
-	// - your own implementation of MLFQ
-	// (feel free to modify arguments and return types)
+	//will be used for boosting
+	clock_gettime(CLOCK_MONOTONIC, &mlfq_schedule_time); // set the time when we first start mlfq
+	while(1){
+		++tot_cntx_switches;
 
-	// YOUR CODE HERE
+		struct timespec curr_time;
+		clock_gettime(CLOCK_MONOTONIC, &curr_time);
+
+		/**
+		 * Gets time of how much time was spent after mlfq was first called/reset 
+		 * time_mlfq_ran is in micro-seconds
+		*/
+		const double time_mlfq_ran = 
+		(mlfq_schedule_time.tv_sec - curr_time.tv_sec) * 1000000 + 
+		(mlfq_schedule_time.tv_nsec - curr_time.tv_nsec) / 1000;
+
+		// BOOST_TIME is the S value in mlfq if we are greater than S we boost all tcb up
+		if(time_mlfq_ran >= BOOST_TIME){
+			boost_all_queue();
+			clock_gettime(CLOCK_MONOTONIC, &mlfq_schedule_time);	//resets time so we can boost again in future
+		}
+
+		while(!isEmpty(q_arrival)) {
+			enqueue(all_queue[0],dequeue(q_arrival)); //adds all arrived tcb to the highest priority
+		}
+
+		running = get_tcb_mlfq();
+
+		// Perform setup before scheduling next worker:
+		if (!running->previously_scheduled) {
+			// Being scheduled for the first time. Used in Response time metric.
+			clock_gettime(CLOCK_MONOTONIC, &running->first_scheduled);
+			running->previously_scheduled = 1;
+		}
+
+		set_timer(!remaining_threads_blocked(running), running->quantum_amt_used);
+
+		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
+		++tot_cntx_switches; 
+		swapcontext(scheduler, running->uctx);
+	}
 }
 
 //DO NOT MODIFY THIS FUNCTION
@@ -411,6 +496,14 @@ void init_library() {
 	tcbs = (List *) malloc(sizeof(List));
 	tcbs->size = 0;
 	tcbs->front = NULL;
+
+	// Initialize queue** that holds all priority queue
+	all_queue = (Queue**) malloc(QUEUE_LEVELS * sizeof(Queue*));
+	for(int level = 0; level < QUEUE_LEVELS; ++level){
+		all_queue[level] = (Queue*) malloc(sizeof(Queue));
+		all_queue[level]->size = 0;
+		all_queue[level]->rear = NULL;
+	}
 
 	// Initialize the ended_tcbs list (used for joins)
 	assert(isUninitializedList(ended_tcbs));
