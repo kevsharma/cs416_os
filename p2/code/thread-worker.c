@@ -385,9 +385,7 @@ static void sched_mlfq() {
 		// Boost queues. 
 		if (total_quantums_elapsed >= S_value_decay_usage_const) {
 			total_quantums_elapsed %= S_value_decay_usage_const;
-			printf("before boosting lmao: "); print_queue(all_queue[0]);
 			boost_all_queues();
-			printf("after boosting lmao: "); print_queue(all_queue[0]);
 		}
 
 		// Choose highest priority unblocked worker to schedule next.
@@ -442,16 +440,16 @@ void recompute_benchmarks() {
 	assert(ended_tcbs->size);
 	assert(running);
 
-	const double num_microseconds_in_sec = 1000;
-	const double num_ns_in_microseconds = 1000000;
+	const double num_us_in_sec = 1000000;
+	const double num_ns_in_us = 1000;
 
 	const double turnaround_time = 
-		(running->completion.tv_sec - running->arrival.tv_sec) * num_microseconds_in_sec + 
-		(running->completion.tv_nsec - running->arrival.tv_nsec) / num_ns_in_microseconds;
+		(running->completion.tv_sec - running->arrival.tv_sec) * num_us_in_sec + 
+		(running->completion.tv_nsec - running->arrival.tv_nsec) / num_ns_in_us;
 
 	const double response_time = 
-		(running->first_scheduled.tv_sec - running->arrival.tv_sec) * num_microseconds_in_sec + 
-		(running->first_scheduled.tv_nsec - running->arrival.tv_nsec) / num_ns_in_microseconds;
+		(running->first_scheduled.tv_sec - running->arrival.tv_sec) * num_us_in_sec + 
+		(running->first_scheduled.tv_nsec - running->arrival.tv_nsec) / num_ns_in_us;
 
 	double size_matters = (double) ended_tcbs->size;
 	avg_turn_time = (avg_turn_time * (size_matters - 1) + turnaround_time) / size_matters;
