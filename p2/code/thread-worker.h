@@ -55,8 +55,7 @@
 #define NONEXISTENT_MUTEX 0
 
 /**
- * TIME_QUANTUM is the time in ms that a thread will have before context is swapped to scheduler.
- * TIME_QUANTUM is in micro-seconds
+ * TIME_QUANTUM is the time in microseconds.
 */
 #define TIME_QUANTUM 10000
 
@@ -104,8 +103,10 @@ typedef struct TCB {
     unsigned int    quantums_elapsed;
     unsigned int    quantum_amt_used;
     struct timespec time_of_last_scheduling;
-    int             time_quantum_used_up_fully; /* For use in MLFQ*/
-    int             prev_priority_level;
+    
+    /* For use in MLFQ*/
+    int             time_quantum_used_up_fully; 
+    int             priority_level;
 
     /* Attributes used for Benchmarks */
     int previously_scheduled;
@@ -231,6 +232,7 @@ void cleanup_library();
  */
 void clean_exited_worker_thread();
 
+void boost_all_queues();
 
 int is_held_by(worker_t this_tid, worker_mutex_t target);
 
@@ -296,10 +298,6 @@ void insert_at_front(List *lst_ptr, tcb *to_be_inserted);
 tcb* contains(List *lst_ptr, worker_t target);
 tcb* remove_from(List *lst_ptr, worker_t target);
 tcb* find_first_unblocked_thread(List *lst_ptr);
-
-tcb* first_unblocked_in_queue(Queue *q);
-void get_tcb_mlfq();
-void boost_all_queue();
 
 int isUninitialized(Queue *q_ptr);
 int isEmpty(Queue *q_ptr);
