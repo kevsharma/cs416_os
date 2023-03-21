@@ -42,9 +42,6 @@ static tcb *running; /* Currently Executing thread. running is NULL if reaped.*/
 static struct itimerval *timer;
 static struct sigaction *sa;
 
-/* Stores the time when mlfq is first started */
-static struct timespec mlfq_schedule_time;
-
 ///////////////////////////////////////////////////////////////////////
 
 int worker_create(worker_t * thread, pthread_attr_t * attr, 
