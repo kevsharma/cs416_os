@@ -22,9 +22,10 @@ double avg_resp_time=0;
 
 static ucontext_t *scheduler, *cleanup;
 
-static worker_t *last_created_worker_tid; /* Monotonically increasing counter. */
+/* Monotonically increasing counters: */
+static atomic_uint last_created_worker_tid = ATOMIC_VAR_INIT(MAIN_THREAD); 
+static atomic_uint current_mutex_num = ATOMIC_VAR_INIT(0);
 
-static worker_mutex_t *current_mutex_num; /* Monotonically increasing counter. */
 static mutex_list *mutexes; /* Currently initialized mutexes. */
 
 static Queue *q_arrival;
@@ -53,6 +54,7 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 
 	// Create tcb for new_worker and put into q_arrival queue
 	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
+	new_tcb->thread_id = *thread = (atomic_fetch_add(&last_created_worker_tid, 1) + 1);
 	new_tcb->ret_value = NULL;
 	new_tcb->join_tid = NONEXISTENT_THREAD; // not waiting on any thread
 	new_tcb->join_retval = NULL;
@@ -71,16 +73,12 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 	new_tcb->uctx->uc_stack.ss_sp = malloc(STACK_SIZE);
 	makecontext(new_tcb->uctx, (void *) function, 1, arg); 
 
+	clock_gettime(CLOCK_MONOTONIC, &new_tcb->arrival);
+
 	// Synchronize access to shared resources.
 	sigset_t set = sigset_init();
 	sigprocmask(SIG_SETMASK, &set, NULL);
-
-	new_tcb->thread_id = ++(*last_created_worker_tid); // shared resource.
-	*thread = new_tcb->thread_id;
-	
-	new_tcb->previously_scheduled = 0;
-	clock_gettime(CLOCK_MONOTONIC, &new_tcb->arrival);
-	
+		
 	enqueue(q_arrival, new_tcb);
 	
 	// Finished accessing shared resources.
@@ -166,12 +164,9 @@ int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t *mutexatt
 
 	assert(mutexes);
 
-	// Write the value back to caller.
-	*mutex = (*current_mutex_num)++;
-
     // Insert created mutex
     mutex_node *mutex_item = (mutex_node *) malloc(sizeof(mutex_node));
-    mutex_item->lock_num = *mutex;
+    mutex_item->lock_num = *mutex = atomic_fetch_add(&current_mutex_num, 1) + 1;
 	mutex_item->holder_tid = NONEXISTENT_THREAD;
     mutex_item->next = mutexes->front;
     mutexes->front = mutex_item;
@@ -548,13 +543,6 @@ void init_library() {
 		}
 	#endif
 
-	// worker_create should associate a new thread with an increasing worker_t tid.
-	last_created_worker_tid = (worker_t *) malloc(sizeof(worker_t));
-	*last_created_worker_tid = MAIN_THREAD;
-
-	// preserve distinctness of mutex numbers - also monotonically increasing.
-	current_mutex_num = (worker_mutex_t *) malloc(sizeof(worker_mutex_t));
-	*current_mutex_num = INITIAL_MUTEX;
 	mutexes = (mutex_list *) malloc(sizeof(mutex_list));
 
 	// Create tcb for main
@@ -610,9 +598,6 @@ void cleanup_library() {
 
 	assert(isEmptyList(ended_tcbs));
 	free(ended_tcbs);
-
-	free(last_created_worker_tid);
-	free(current_mutex_num);
 
 	assert(!(mutexes->front));
 	free(mutexes);

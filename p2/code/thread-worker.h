@@ -38,13 +38,6 @@
 #define NONEXISTENT_THREAD 0 
 
 /**
- * Mutex numbers are monotonically increasing integers starting with 1.
- * If a mutex number is zero and stored within a tcb's seeking_lock, there
- * are ramifications for scheduling for that thread. See more below.
-*/
-#define INITIAL_MUTEX 1 
-
-/**
  * NONEXISTENT_MUTEX is used within seeking_lock attribute of TCB
  * to indicate that a thread is not waiting to acquire any lock.
  * 
@@ -81,6 +74,8 @@
 #include <signal.h>
 #include <string.h>
 #include <time.h>
+#include <stdbool.h>
+#include <stdatomic.h>
 
 typedef unsigned int worker_t;
 typedef unsigned int worker_mutex_t;
