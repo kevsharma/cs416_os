@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
         clock_gettime(CLOCK_REALTIME, &end);
 
         printf("Total run time: %lu micro-seconds\n",
-               (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000);
+               (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000);
 
 	pthread_mutex_destroy(&mutex);
 	verify();

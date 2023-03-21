@@ -30,11 +30,20 @@ static mutex_list *mutexes; /* Currently initialized mutexes. */
 static Queue *q_arrival;
 static List *tcbs, *ended_tcbs;
 
+static Queue **all_queue;
+#ifndef PSJF
+	static unsigned int total_quantums_elapsed = 0;
+	const static unsigned int S_value_decay_usage_const = QUEUE_LEVELS * 16;
+#endif
+
 static tcb *running; /* Currently Executing thread. running is NULL if reaped.*/
 
 /* Preemption mechanisms: */
 static struct itimerval *timer;
 static struct sigaction *sa;
+
+/* Stores the time when mlfq is first started */
+static struct timespec mlfq_schedule_time;
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -51,6 +60,13 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 	new_tcb->join_tid = NONEXISTENT_THREAD; // not waiting on any thread
 	new_tcb->join_retval = NULL;
 	new_tcb->seeking_lock = NONEXISTENT_MUTEX; // not waiting on any lock
+	
+	new_tcb->quantums_elapsed = 0;
+	new_tcb->quantum_amt_used = 0;
+	new_tcb->time_quantum_used_up_fully = 0;
+	new_tcb->priority_level = 0;
+	new_tcb->previously_scheduled = 0;
+
 	new_tcb->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
 	getcontext(new_tcb->uctx); // heap space stores context
 	new_tcb->uctx->uc_link = cleanup; // all workers must flow into cleanup
@@ -89,8 +105,12 @@ int worker_yield() {
 	
 	if (running->quantum_amt_used >= TIME_QUANTUM) {
 		running->time_quantum_used_up_fully = 1;
-		running->quantums_elapsed += 1;
 		running->quantum_amt_used = 0;
+
+		running->quantums_elapsed += 1;
+		#ifndef PSJF
+			total_quantums_elapsed += 1;
+		#endif
 	}
 
 	return swapcontext(running->uctx, scheduler);
@@ -314,13 +334,93 @@ static void sched_psjf() {
 	}
 }
 
+/* This functions boosts all tcb to top and also resets all scheduler attributes*/
+void boost_all_queues(){
+	int curr_level = 0;
+	if (QUEUE_LEVELS == 1) {
+		return;
+	}
+
+	for(curr_level = 1; curr_level < QUEUE_LEVELS; ++curr_level){
+		while(!isEmpty(all_queue[curr_level])){
+			//Get current tcb to reset attributes
+			tcb *curr_tcb = dequeue(all_queue[curr_level]);
+
+			//resets all information back to default
+			curr_tcb->quantum_amt_used = 0;
+			curr_tcb->time_quantum_used_up_fully = 0;
+			curr_tcb->priority_level = 0;
+
+			//add it back into top priority queue
+			enqueue(all_queue[0],curr_tcb);
+		}
+	}
+
+	assert(all_queue[0]->size == tcbs->size);
+}
 
 /* Preemptive MLFQ scheduling algorithm */
 static void sched_mlfq() {
-	// - your own implementation of MLFQ
-	// (feel free to modify arguments and return types)
+	while(1) {
+		++tot_cntx_switches;
 
-	// YOUR CODE HERE
+		while(!isEmpty(q_arrival)) {
+			tcb *newly_arrived_job = dequeue(q_arrival);
+			enqueue(all_queue[0], newly_arrived_job); //adds all arrived tcb to the highest priority
+			insert_at_front(tcbs, newly_arrived_job);
+		}
+
+		// add current running in the right priority level queue
+		if (running != NULL) { // dont enqueue terminated job freed up by cleanup context.
+			if (running->time_quantum_used_up_fully) { // Preempted because used up time quantum
+				running->time_quantum_used_up_fully = 0;
+				running->quantum_amt_used = 0;
+				running->priority_level = (running->priority_level == (QUEUE_LEVELS - 1)) 
+					? running->priority_level : running->priority_level + 1;
+			}
+			enqueue(all_queue[running->priority_level], running);
+			running = NULL;
+		}
+
+		// Boost queues. 
+		if (total_quantums_elapsed >= S_value_decay_usage_const) {
+			total_quantums_elapsed %= S_value_decay_usage_const;
+			boost_all_queues();
+		}
+
+		// Choose highest priority unblocked worker to schedule next.
+		for(int curr_level = 0; running == NULL && curr_level < QUEUE_LEVELS; ++curr_level) {
+			int threads_at_this_priority = all_queue[curr_level]->size;
+
+			while (threads_at_this_priority) {
+				tcb *candidate = dequeue(all_queue[curr_level]);
+			
+				if (!is_blocked(candidate)) {
+					running = candidate;
+					break;
+				}
+
+				enqueue(all_queue[curr_level], candidate);
+				--threads_at_this_priority;
+			}                         
+		}
+
+		assert(running);
+
+		// Perform setup before scheduling next worker:
+		if (!running->previously_scheduled) {
+			// Being scheduled for the first time. Used in Response time metric.
+			clock_gettime(CLOCK_MONOTONIC, &running->first_scheduled);
+			running->previously_scheduled = 1;
+		}
+
+
+		set_timer(!remaining_threads_blocked(running), running->quantum_amt_used);
+
+		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
+		++tot_cntx_switches; 
+		swapcontext(scheduler, running->uctx);
+	}
 }
 
 //DO NOT MODIFY THIS FUNCTION
@@ -340,16 +440,16 @@ void recompute_benchmarks() {
 	assert(ended_tcbs->size);
 	assert(running);
 
-	const double num_microseconds_in_sec = 1000;
-	const double num_ns_in_microseconds = 1000000;
+	const double num_us_in_sec = 1000000;
+	const double num_ns_in_us = 1000;
 
 	const double turnaround_time = 
-		(running->completion.tv_sec - running->arrival.tv_sec) * num_microseconds_in_sec + 
-		(running->completion.tv_nsec - running->arrival.tv_nsec) / num_ns_in_microseconds;
+		(running->completion.tv_sec - running->arrival.tv_sec) * num_us_in_sec + 
+		(running->completion.tv_nsec - running->arrival.tv_nsec) / num_ns_in_us;
 
 	const double response_time = 
-		(running->first_scheduled.tv_sec - running->arrival.tv_sec) * num_microseconds_in_sec + 
-		(running->first_scheduled.tv_nsec - running->arrival.tv_nsec) / num_ns_in_microseconds;
+		(running->first_scheduled.tv_sec - running->arrival.tv_sec) * num_us_in_sec + 
+		(running->first_scheduled.tv_nsec - running->arrival.tv_nsec) / num_ns_in_us;
 
 	double size_matters = (double) ended_tcbs->size;
 	avg_turn_time = (avg_turn_time * (size_matters - 1) + turnaround_time) / size_matters;
@@ -369,9 +469,11 @@ void set_timer(int to_set, int remaining) {
 
 /* Swaps the context to scheduler after a SIGPROF signal. */
 void timer_signal_handler(int signum) {
-	// printf("RING RING -> Swapping to scheduler context\n");
 	running->time_quantum_used_up_fully = 1;
 	running->quantums_elapsed += 1;
+	#ifndef PSJF
+		total_quantums_elapsed += 1;
+	#endif
 	running->quantum_amt_used = 0;
 	swapcontext(running->uctx, scheduler);
 }
@@ -438,6 +540,17 @@ void init_library() {
 	cleanup->uc_sigmask = sigset_init();
 	makecontext(cleanup, clean_exited_worker_thread, 0);
 
+	#ifndef PSJF
+		// Initialize queue** that holds all priority queue
+		all_queue = (Queue **) malloc(QUEUE_LEVELS * sizeof(Queue *));
+		int level;
+		for(level = 0; level < QUEUE_LEVELS; ++level){
+			all_queue[level] = (Queue*) malloc(sizeof(Queue));
+			all_queue[level]->size = 0;
+			all_queue[level]->rear = NULL;
+		}
+	#endif
+
 	// worker_create should associate a new thread with an increasing worker_t tid.
 	last_created_worker_tid = (worker_t *) malloc(sizeof(worker_t));
 	*last_created_worker_tid = MAIN_THREAD;
@@ -456,6 +569,8 @@ void init_library() {
 	running->quantums_elapsed = 0;
 	running->quantum_amt_used = 0;
 	running->time_quantum_used_up_fully = 0;
+	running->priority_level = 0;
+	running->previously_scheduled = 0;
 	getcontext(running->uctx);
 
 	// Register atexit() function to clean up supporting mechanisms.
@@ -504,6 +619,14 @@ void cleanup_library() {
 
 	assert(!(mutexes->front));
 	free(mutexes);
+
+	#ifndef PSJF
+		int level;
+		for (level = 0; level < QUEUE_LEVELS; ++level) {
+			free(all_queue[level]);
+		}
+		free(all_queue);
+	#endif
 
 	free(scheduler->uc_stack.ss_sp);
 	free(scheduler);

@@ -55,9 +55,20 @@
 #define NONEXISTENT_MUTEX 0
 
 /**
- * TIME_QUANTUM is the time in ms that a thread will have before context is swapped to scheduler.
+ * TIME_QUANTUM is the time in microseconds.
 */
 #define TIME_QUANTUM 10000
+
+/**
+ * QUEUE_LEVELS is the amount of priority queue levels that mlfq uses
+*/
+#define QUEUE_LEVELS 4
+
+/**
+ * BOOST_TIME is the S value of mlfq
+ * BOOST_TIME is in micro-seconds
+*/
+#define BOOST_TIME 50000
 
 /**
  * STACK_SIZE is the size of the stack that will be allocated for the context
@@ -92,7 +103,10 @@ typedef struct TCB {
     unsigned int    quantums_elapsed;
     unsigned int    quantum_amt_used;
     struct timespec time_of_last_scheduling;
-    int             time_quantum_used_up_fully; /* For use in MLFQ*/
+    
+    /* For use in MLFQ*/
+    int             time_quantum_used_up_fully; 
+    int             priority_level;
 
     /* Attributes used for Benchmarks */
     int previously_scheduled;
@@ -218,6 +232,7 @@ void cleanup_library();
  */
 void clean_exited_worker_thread();
 
+void boost_all_queues();
 
 int is_held_by(worker_t this_tid, worker_mutex_t target);
 
