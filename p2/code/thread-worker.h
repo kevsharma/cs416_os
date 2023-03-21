@@ -65,12 +65,6 @@
 #define QUEUE_LEVELS 4
 
 /**
- * BOOST_TIME is the S value of mlfq
- * BOOST_TIME is in micro-seconds
-*/
-#define BOOST_TIME 50000
-
-/**
  * STACK_SIZE is the size of the stack that will be allocated for the context
 */
 #define STACK_SIZE 16384
