@@ -38,13 +38,6 @@
 #define NONEXISTENT_THREAD 0 
 
 /**
- * Mutex numbers are monotonically increasing integers starting with 1.
- * If a mutex number is zero and stored within a tcb's seeking_lock, there
- * are ramifications for scheduling for that thread. See more below.
-*/
-#define INITIAL_MUTEX 1 
-
-/**
  * NONEXISTENT_MUTEX is used within seeking_lock attribute of TCB
  * to indicate that a thread is not waiting to acquire any lock.
  * 
@@ -65,12 +58,6 @@
 #define QUEUE_LEVELS 4
 
 /**
- * BOOST_TIME is the S value of mlfq
- * BOOST_TIME is in micro-seconds
-*/
-#define BOOST_TIME 50000
-
-/**
  * STACK_SIZE is the size of the stack that will be allocated for the context
 */
 #define STACK_SIZE 16384
@@ -87,6 +74,8 @@
 #include <signal.h>
 #include <string.h>
 #include <time.h>
+#include <stdbool.h>
+#include <stdatomic.h>
 
 typedef unsigned int worker_t;
 typedef unsigned int worker_mutex_t;

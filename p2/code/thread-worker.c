@@ -22,28 +22,26 @@ double avg_resp_time=0;
 
 static ucontext_t *scheduler, *cleanup;
 
-static worker_t *last_created_worker_tid; /* Monotonically increasing counter. */
+/* Monotonically increasing counters: */
+static atomic_uint last_created_worker_tid = ATOMIC_VAR_INIT(MAIN_THREAD); 
+static atomic_uint current_mutex_num = ATOMIC_VAR_INIT(0);
 
-static worker_mutex_t *current_mutex_num; /* Monotonically increasing counter. */
 static mutex_list *mutexes; /* Currently initialized mutexes. */
 
 static Queue *q_arrival;
 static List *tcbs, *ended_tcbs;
 
+/* MLFQ support variables */
 static Queue **all_queue;
-#ifndef PSJF
-	static unsigned int total_quantums_elapsed = 0;
-	const static unsigned int S_value_decay_usage_const = QUEUE_LEVELS * 16;
-#endif
+static unsigned int total_quantums_elapsed = 0;
+const static unsigned int S_value_decay_usage_const = QUEUE_LEVELS * 16;
 
-static tcb *running; /* Currently Executing thread. running is NULL if reaped.*/
+/* Currently Executing thread. running is NULL if reaped.*/
+static tcb *running;
 
 /* Preemption mechanisms: */
 static struct itimerval *timer;
 static struct sigaction *sa;
-
-/* Stores the time when mlfq is first started */
-static struct timespec mlfq_schedule_time;
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -56,6 +54,7 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 
 	// Create tcb for new_worker and put into q_arrival queue
 	tcb* new_tcb = (tcb *) malloc(sizeof(tcb));
+	new_tcb->thread_id = *thread = (atomic_fetch_add(&last_created_worker_tid, 1) + 1);
 	new_tcb->ret_value = NULL;
 	new_tcb->join_tid = NONEXISTENT_THREAD; // not waiting on any thread
 	new_tcb->join_retval = NULL;
@@ -74,16 +73,12 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 	new_tcb->uctx->uc_stack.ss_sp = malloc(STACK_SIZE);
 	makecontext(new_tcb->uctx, (void *) function, 1, arg); 
 
+	clock_gettime(CLOCK_MONOTONIC, &new_tcb->arrival);
+
 	// Synchronize access to shared resources.
 	sigset_t set = sigset_init();
 	sigprocmask(SIG_SETMASK, &set, NULL);
-
-	new_tcb->thread_id = ++(*last_created_worker_tid); // shared resource.
-	*thread = new_tcb->thread_id;
-	
-	new_tcb->previously_scheduled = 0;
-	clock_gettime(CLOCK_MONOTONIC, &new_tcb->arrival);
-	
+		
 	enqueue(q_arrival, new_tcb);
 	
 	// Finished accessing shared resources.
@@ -108,26 +103,14 @@ int worker_yield() {
 		running->quantum_amt_used = 0;
 
 		running->quantums_elapsed += 1;
-		#ifndef PSJF
-			total_quantums_elapsed += 1;
-		#endif
+		total_quantums_elapsed += 1; // Only used in MLFQ.
 	}
 
 	return swapcontext(running->uctx, scheduler);
 }
 
 void worker_exit(void *value_ptr) {
-	// block signals - accessing shared tcb list in alert.
-	sigset_t set = sigset_init();
-	sigprocmask(SIG_SETMASK,&set,NULL);
-
 	running->ret_value = value_ptr;
-	alert_waiting_threads(running->thread_id, value_ptr); 
-	
-	// unblock signals - finished accessing shared tcb list.
-	sigprocmask(SIG_UNBLOCK,&set, NULL);
-
-	// Transfer then flows to cleanup context.
 }
 
 int worker_join(worker_t thread, void **value_ptr) {
@@ -169,12 +152,9 @@ int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t *mutexatt
 
 	assert(mutexes);
 
-	// Write the value back to caller.
-	*mutex = (*current_mutex_num)++;
-
     // Insert created mutex
     mutex_node *mutex_item = (mutex_node *) malloc(sizeof(mutex_node));
-    mutex_item->lock_num = *mutex;
+    mutex_item->lock_num = *mutex = atomic_fetch_add(&current_mutex_num, 1) + 1;
 	mutex_item->holder_tid = NONEXISTENT_THREAD;
     mutex_item->next = mutexes->front;
     mutexes->front = mutex_item;
@@ -471,9 +451,7 @@ void set_timer(int to_set, int remaining) {
 void timer_signal_handler(int signum) {
 	running->time_quantum_used_up_fully = 1;
 	running->quantums_elapsed += 1;
-	#ifndef PSJF
-		total_quantums_elapsed += 1;
-	#endif
+	total_quantums_elapsed += 1; // Only used in MLFQ
 	running->quantum_amt_used = 0;
 	swapcontext(running->uctx, scheduler);
 }
@@ -551,13 +529,6 @@ void init_library() {
 		}
 	#endif
 
-	// worker_create should associate a new thread with an increasing worker_t tid.
-	last_created_worker_tid = (worker_t *) malloc(sizeof(worker_t));
-	*last_created_worker_tid = MAIN_THREAD;
-
-	// preserve distinctness of mutex numbers - also monotonically increasing.
-	current_mutex_num = (worker_mutex_t *) malloc(sizeof(worker_mutex_t));
-	*current_mutex_num = INITIAL_MUTEX;
 	mutexes = (mutex_list *) malloc(sizeof(mutex_list));
 
 	// Create tcb for main
@@ -614,9 +585,6 @@ void cleanup_library() {
 	assert(isEmptyList(ended_tcbs));
 	free(ended_tcbs);
 
-	free(last_created_worker_tid);
-	free(current_mutex_num);
-
 	assert(!(mutexes->front));
 	free(mutexes);
 
@@ -646,19 +614,16 @@ void cleanup_library() {
 void clean_exited_worker_thread() {
 	while(1) {
 		clock_gettime(CLOCK_MONOTONIC, &running->completion);
-
-		insert_at_front(ended_tcbs, running);
 		
 		// PSJF would have removed, but MLFQ wouldn't have.
 		if (contains(tcbs, running->thread_id)) {
 			remove_from(tcbs, running->thread_id);
 		}
 		
-		// With each thread complete, we compute avg tt/rr times.
-		recompute_benchmarks();
+		insert_at_front(ended_tcbs, running);
+		recompute_benchmarks();  // Recompute avg tt/rr times given that worker ended.
 
-		/* The following alert call is necessary if worker_thread forgot to call worker_exit().*/
-		alert_waiting_threads(running->thread_id, NULL); // Never overwrite join return value. 
+		alert_waiting_threads(running->thread_id, running->ret_value); 
 
 		running = NULL; // IMPORTANT FLAG for scheduler;
 		swapcontext(cleanup, scheduler);
