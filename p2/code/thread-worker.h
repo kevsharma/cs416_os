@@ -50,7 +50,7 @@
 /**
  * TIME_QUANTUM is the time in microseconds.
 */
-#define TIME_QUANTUM 10000
+#define TIME_QUANTUM 1
 
 /**
  * QUEUE_LEVELS is the amount of priority queue levels that mlfq uses
@@ -82,7 +82,7 @@ typedef unsigned int mutex_t;
 
 typedef struct worker_mutex_t {
     mutex_t mutex_num;
-    bool is_acquired;
+    volatile atomic_flag is_acquired;
 } worker_mutex_t;
 
 typedef struct TCB {
@@ -190,7 +190,7 @@ void print_app_stats(void);
 void recompute_benchmarks();
 
 /* One shot timer that will send SIGPROF signal after TIME_QUANTUM microseconds. */
-void set_timer(int to_set, int remaining);
+void set_timer(int remaining);
 
 /* Swaps the context to scheduler after a SIGPROF signal. */
 void timer_signal_handler(int signum);

@@ -19,7 +19,8 @@ double avg_resp_time=0;
 
 /* Supporting Variables: */
 /* ==================== */
-
+static unsigned int yieldsS = 0;
+static unsigned int preemptions = 0;
 static ucontext_t *scheduler, *cleanup;
 
 /* Monotonically increasing counters: */
@@ -145,27 +146,37 @@ int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t *mutexatt
 
 	assert(mutex);
 	mutex->mutex_num = atomic_fetch_add(&current_mutex_num, 1) + 1;
-	mutex->is_acquired = false;
+	atomic_flag_clear(&(mutex->is_acquired));
     return 0;
 }
 
 int worker_mutex_lock(worker_mutex_t *mutex) {
-    while(__atomic_test_and_set(&(mutex->is_acquired), __ATOMIC_RELAXED)) {
-		running->quantums_elapsed += 1;
+	// If there exists some worker with lesser used time quantum, yield.
+	// for (Node *ptr = tcbs->front; ptr; ptr = ptr->next) {
+	// 	if (compare_usage(running, ptr->data)) {
+	// 		worker_yield();
+	// 		break;
+	// 	}
+	// }
+    
+	/* Attempt to acquire lock. */
+	while(atomic_flag_test_and_set(&(mutex->is_acquired))) {
+		++yieldsS;
 		worker_yield();
 	}
 
 	return 0;
 }
 
-int worker_mutex_unlock(worker_mutex_t *mutex) {
-	__atomic_clear(&(mutex->is_acquired), __ATOMIC_RELAXED);
+int worker_mutex_unlock(worker_mutex_t *mutex) {	
+	atomic_flag_clear(&(mutex->is_acquired));	
 	return 0;
 }
 
 int worker_mutex_destroy(worker_mutex_t *mutex) {
 	worker_mutex_unlock(mutex);
 	mutex->mutex_num = NONEXISTENT_MUTEX;
+	atomic_flag_clear_explicit(&(mutex->is_acquired), __ATOMIC_SEQ_CST);
 }
 
 /* scheduler */
@@ -204,7 +215,7 @@ static void sched_psjf() {
 			running->previously_scheduled = 1;
 		}
 		
-		set_timer(!remaining_threads_blocked(running), running->quantum_amt_used);
+		set_timer(running->quantum_amt_used);
 
 		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
 		++tot_cntx_switches; 
@@ -292,8 +303,7 @@ static void sched_mlfq() {
 			running->previously_scheduled = 1;
 		}
 
-
-		set_timer(!remaining_threads_blocked(running), running->quantum_amt_used);
+		set_timer(running->quantum_amt_used);
 
 		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
 		++tot_cntx_switches; 
@@ -304,7 +314,8 @@ static void sched_mlfq() {
 //DO NOT MODIFY THIS FUNCTION
 /* Function to print global statistics. Do not modify this function.*/
 void print_app_stats(void) {
-
+	print_list(ended_tcbs);
+	printf("Yields %d | Preemptions %d | Total Time Qs: %d\n", yieldsS, preemptions, total_quantums_elapsed);
        fprintf(stderr, "Total context switches %ld \n", tot_cntx_switches);
        fprintf(stderr, "Average turnaround time %lf \n", avg_turn_time);
        fprintf(stderr, "Average response time  %lf \n", avg_resp_time);
@@ -334,13 +345,13 @@ void recompute_benchmarks() {
 	avg_resp_time = (avg_resp_time * (size_matters - 1) + response_time) / size_matters;
 }
 
-/* One shot timer that will send SIGPROF signal after TIME_QUANTUM microseconds. */
-void set_timer(int to_set, int remaining) {
+/* One shot timer that will send SIGPROF signal after TIME_QUANTUM -remaining microseconds. */
+void set_timer(int remaining) {
 	timer->it_interval.tv_sec = 0;
 	timer->it_interval.tv_usec = 0;
 
 	timer->it_value.tv_sec = 0;
-	timer->it_value.tv_usec = to_set ? (TIME_QUANTUM - remaining) : 0;
+	timer->it_value.tv_usec = remaining_threads_blocked(running) ? 0 : (TIME_QUANTUM - remaining);
 
 	setitimer(ITIMER_PROF, timer, NULL);
 }
@@ -351,6 +362,7 @@ void timer_signal_handler(int signum) {
 	running->quantums_elapsed += 1;
 	total_quantums_elapsed += 1; // Only used in MLFQ
 	running->quantum_amt_used = 0;
+	++preemptions;
 	swapcontext(running->uctx, scheduler);
 }
 
@@ -646,29 +658,27 @@ void insert_by_usage(List *lst_ptr, tcb *to_be_inserted) {
 
 	if (isEmptyList(lst_ptr)) {
 		lst_ptr->front = item;
-	} else if (lst_ptr->size == 1) {
+	} else {
 		if (compare_usage(to_be_inserted, lst_ptr->front->data)) {
 			item->next = lst_ptr->front;
 			lst_ptr->front = item;
 		} else {
-			lst_ptr->front->next = item;
-		}
-	} else {
-		// list has greater than 2 elements.
-		Node *ptr = lst_ptr->front->next;
-		Node *prev = lst_ptr->front;
-		int position_found = 0;
-		for (; ptr; ptr = ptr->next, prev = prev->next) {
-			if (compare_usage(to_be_inserted, ptr->data)) {
-				prev->next = item;
-				item->next = ptr;
-				position_found = 1;
-				break;
+			Node *ptr = lst_ptr->front->next;
+			Node *prev = lst_ptr->front;
+			int position_found = 0;
+			
+			for (; ptr; ptr = ptr->next, prev = prev->next) {
+				if (compare_usage(to_be_inserted, ptr->data)) {
+					prev->next = item;
+					item->next = ptr;
+					position_found = 1;
+					break;
+				}
 			}
-		}
 
-		if (!position_found) { 
-			prev->next = item; // appended to list.
+			if (!position_found) { 
+				prev->next = item; // appended to list.
+			}
 		}
 	}
 
