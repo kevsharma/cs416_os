@@ -31,13 +31,13 @@ static mutex_list *mutexes; /* Currently initialized mutexes. */
 static Queue *q_arrival;
 static List *tcbs, *ended_tcbs;
 
+/* MLFQ support variables */
 static Queue **all_queue;
-#ifndef PSJF
-	static unsigned int total_quantums_elapsed = 0;
-	const static unsigned int S_value_decay_usage_const = QUEUE_LEVELS * 16;
-#endif
+static unsigned int total_quantums_elapsed = 0;
+const static unsigned int S_value_decay_usage_const = QUEUE_LEVELS * 16;
 
-static tcb *running; /* Currently Executing thread. running is NULL if reaped.*/
+/* Currently Executing thread. running is NULL if reaped.*/
+static tcb *running;
 
 /* Preemption mechanisms: */
 static struct itimerval *timer;
@@ -103,9 +103,7 @@ int worker_yield() {
 		running->quantum_amt_used = 0;
 
 		running->quantums_elapsed += 1;
-		#ifndef PSJF
-			total_quantums_elapsed += 1;
-		#endif
+		total_quantums_elapsed += 1; // Only used in MLFQ.
 	}
 
 	return swapcontext(running->uctx, scheduler);
@@ -453,9 +451,7 @@ void set_timer(int to_set, int remaining) {
 void timer_signal_handler(int signum) {
 	running->time_quantum_used_up_fully = 1;
 	running->quantums_elapsed += 1;
-	#ifndef PSJF
-		total_quantums_elapsed += 1;
-	#endif
+	total_quantums_elapsed += 1; // Only used in MLFQ
 	running->quantum_amt_used = 0;
 	swapcontext(running->uctx, scheduler);
 }
