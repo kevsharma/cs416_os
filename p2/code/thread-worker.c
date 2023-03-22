@@ -112,17 +112,7 @@ int worker_yield() {
 }
 
 void worker_exit(void *value_ptr) {
-	// block signals - accessing shared tcb list in alert.
-	sigset_t set = sigset_init();
-	sigprocmask(SIG_SETMASK,&set,NULL);
-
 	running->ret_value = value_ptr;
-	alert_waiting_threads(running->thread_id, value_ptr); 
-	
-	// unblock signals - finished accessing shared tcb list.
-	sigprocmask(SIG_UNBLOCK,&set, NULL);
-
-	// Transfer then flows to cleanup context.
 }
 
 int worker_join(worker_t thread, void **value_ptr) {
@@ -628,19 +618,16 @@ void cleanup_library() {
 void clean_exited_worker_thread() {
 	while(1) {
 		clock_gettime(CLOCK_MONOTONIC, &running->completion);
-
-		insert_at_front(ended_tcbs, running);
 		
 		// PSJF would have removed, but MLFQ wouldn't have.
 		if (contains(tcbs, running->thread_id)) {
 			remove_from(tcbs, running->thread_id);
 		}
 		
-		// With each thread complete, we compute avg tt/rr times.
-		recompute_benchmarks();
+		insert_at_front(ended_tcbs, running);
+		recompute_benchmarks();  // Recompute avg tt/rr times given that worker ended.
 
-		/* The following alert call is necessary if worker_thread forgot to call worker_exit().*/
-		alert_waiting_threads(running->thread_id, NULL); // Never overwrite join return value. 
+		alert_waiting_threads(running->thread_id, running->ret_value); 
 
 		running = NULL; // IMPORTANT FLAG for scheduler;
 		swapcontext(cleanup, scheduler);
