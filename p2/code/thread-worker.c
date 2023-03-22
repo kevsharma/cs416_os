@@ -26,8 +26,6 @@ static ucontext_t *scheduler, *cleanup;
 static atomic_uint last_created_worker_tid = ATOMIC_VAR_INIT(MAIN_THREAD); 
 static atomic_uint current_mutex_num = ATOMIC_VAR_INIT(0);
 
-static mutex_list *mutexes; /* Currently initialized mutexes. */
-
 static Queue *q_arrival;
 static List *tcbs, *ended_tcbs;
 
@@ -58,7 +56,6 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 	new_tcb->ret_value = NULL;
 	new_tcb->join_tid = NONEXISTENT_THREAD; // not waiting on any thread
 	new_tcb->join_retval = NULL;
-	new_tcb->seeking_lock = NONEXISTENT_MUTEX; // not waiting on any lock
 	
 	new_tcb->quantums_elapsed = 0;
 	new_tcb->quantum_amt_used = 0;
@@ -145,129 +142,30 @@ int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t *mutexatt
 	if (!scheduler) { // first time library called:
 		init_library();
 	}    
-	
-	// block signals (we will access shared mutex list).
-	sigset_t set = sigset_init();
-	sigprocmask(SIG_SETMASK,&set,NULL);
 
-	assert(mutexes);
-
-    // Insert created mutex
-    mutex_node *mutex_item = (mutex_node *) malloc(sizeof(mutex_node));
-    mutex_item->lock_num = *mutex = atomic_fetch_add(&current_mutex_num, 1) + 1;
-	mutex_item->holder_tid = NONEXISTENT_THREAD;
-    mutex_item->next = mutexes->front;
-    mutexes->front = mutex_item;
-
-    // unblock signals.
-	sigprocmask(SIG_UNBLOCK,&set, NULL);
+	assert(mutex);
+	mutex->mutex_num = atomic_fetch_add(&current_mutex_num, 1) + 1;
+	mutex->is_acquired = false;
     return 0;
 }
 
 int worker_mutex_lock(worker_mutex_t *mutex) {
-    // block signals - accesses shared resource mutex.
-	sigset_t set = sigset_init();
-	sigprocmask(SIG_SETMASK,&set,NULL);
-
-    /**
-     * The thread is blocked from returning from this function
-     * until it can succesfully acquire the lock.
-     * 
-     * Note that when the lock is released, it is not necessary
-     * that this thread acquires the lock. Therefore, we must reset
-     * the seeking_lock attribute to the desired lock.
-     * 
-     * The Scheduler will not schedule any thread that is waiting
-     * on another thread to release a lock. Suppose A holds mutex m,
-     * and B and C wish to acquire mutex m. When A releases, B and C's 
-     * seeking_lock is reset such that they are no longer waiting.
-     * - If B is scheduled after A releases the lock, then B
-     * acquires the lock. When B is preempted and C is scheduled (for example),
-     * then C will find that B still holds the lock and will set it's 
-     * seeking_lock to waiting for m again.
-     * - After B releases, there is no more race and C can acquire the 
-     * lock after it is scheduled.
-     * 
-     * The scheduler skips any thread waiting, but because A's relinquishing
-     * of the lock triggered a cycle through the tcb list to clear out every
-     * thread's seeking variable (if and only if that thread was seeking m), 
-     * then the scheduler can then schedule B and C. The reasoning behind
-     * this is that there is no point to schedule B or C until A gives up
-     * the lock since B or C can make no meaningful progress into the 
-     * critical section anyway.
-    */
-    while(!is_held_by(NONEXISTENT_THREAD, *mutex)) {
-		running->seeking_lock = *mutex;
+    while(__atomic_test_and_set(&(mutex->is_acquired), __ATOMIC_RELAXED)) {
+		running->quantums_elapsed += 1;
 		worker_yield();
 	}
 
-	// now mutex not held by any thread so acquire.
-	mutex_node *m = fetch_from_mutexes(*mutex);
-	assert(m); // can't acquire an invalid node	
-	m->holder_tid = running->thread_id; // u can make this atomic. 
-    
-	// unblock signals - finished accessing shared resource
-	sigprocmask(SIG_UNBLOCK,&set, NULL);
 	return 0;
 }
 
 int worker_mutex_unlock(worker_mutex_t *mutex) {
-    // block signals    
-	sigset_t set = sigset_init();
-	sigprocmask(SIG_SETMASK,&set,NULL);
-	
-	// Can't unlock mutex when caller does not have a lock over it.
-	assert(is_held_by(running->thread_id, *mutex));
-
-	// Release the lock.
-	(fetch_from_mutexes(*mutex))->holder_tid = NONEXISTENT_THREAD;
-	broadcast_lock_release(*mutex); 
-
-    // unblock signals
-	sigprocmask(SIG_UNBLOCK, &set, NULL);
-
+	__atomic_clear(&(mutex->is_acquired), __ATOMIC_RELAXED);
 	return 0;
 }
 
 int worker_mutex_destroy(worker_mutex_t *mutex) {
-    // block signals - accessing shared resources.
-	sigset_t set = sigset_init();
-	sigprocmask(SIG_SETMASK,&set,NULL);
-
-    // Ensure mutexes is not empty.
-    assert(mutexes);
-
-	// If the mutex is held by some thread, unlock it first.
-	if (!is_held_by(NONEXISTENT_THREAD, *mutex)) {
-		worker_mutex_unlock(mutex);
-	}
-
-	// Proceed to destroy unlocked mutex.
-	mutex_node *front = mutexes->front;
-    assert(front);
-
-    if (front->lock_num == *mutex) {
-		*mutex = NONEXISTENT_MUTEX;
-        mutexes->front = front->next;
-        free(front);
-    } else {
-		// Guaranteed to have at least two nodes.
-		mutex_node *ptr = front->next;
-		mutex_node *prev = front;
-
-		for(; ptr; prev = prev->next, ptr = ptr->next) {
-			if(ptr->lock_num == *mutex) { 
-				*mutex = NONEXISTENT_MUTEX;
-				prev->next = ptr->next;
-				free(ptr);
-				break;
-			}
-		}
-	}
-
-	// Note that lock always initialized due to is_held_by assertion.
-	sigprocmask(SIG_UNBLOCK, &set, NULL);
-    return 0;
+	worker_mutex_unlock(mutex);
+	mutex->mutex_num = NONEXISTENT_MUTEX;
 }
 
 /* scheduler */
@@ -297,7 +195,7 @@ static void sched_psjf() {
 		}
 		
 		// Find next worker with lowest runtime so far.
-		running = remove_from(tcbs, find_first_unblocked_thread(tcbs)->thread_id);
+		running = remove_from(tcbs, find_first_unblocked_thread(tcbs));
 
 		// Perform setup before scheduling next worker:
 		if (!running->previously_scheduled) {
@@ -529,14 +427,11 @@ void init_library() {
 		}
 	#endif
 
-	mutexes = (mutex_list *) malloc(sizeof(mutex_list));
-
 	// Create tcb for main
 	running = (tcb *) malloc(sizeof(tcb));
 	running->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
 	running->thread_id = MAIN_THREAD;
 	running->join_tid = NONEXISTENT_THREAD;
-	running->seeking_lock = NONEXISTENT_MUTEX;
 	running->quantums_elapsed = 0;
 	running->quantum_amt_used = 0;
 	running->time_quantum_used_up_fully = 0;
@@ -585,9 +480,6 @@ void cleanup_library() {
 	assert(isEmptyList(ended_tcbs));
 	free(ended_tcbs);
 
-	assert(!(mutexes->front));
-	free(mutexes);
-
 	#ifndef PSJF
 		int level;
 		for (level = 0; level < QUEUE_LEVELS; ++level) {
@@ -631,30 +523,15 @@ void clean_exited_worker_thread() {
 }
 
 
-/* Returns 1 if this_tid holds target, 0 otherwise. Aborts if target mutex doesn't exist */
-int is_held_by(worker_t this_tid, worker_mutex_t target) {
-	mutex_node *node_containing_mutex = fetch_from_mutexes(target);
-	assert(node_containing_mutex); // can't hold a mutex which doesn't exist.
-
-	return node_containing_mutex->holder_tid == this_tid;
-}
-
-
 /* returns 1 if [thread_id] is waiting on a thread, 0 otherwise. */
 int is_waiting_on_a_thread(tcb *thread) {
 	return thread->join_tid != NONEXISTENT_THREAD;
 }
 
 
-/* returns 1 if [thread_id] is waiting on a lock, 0 otherwise. */
-int is_waiting_on_a_mutex(tcb *thread) {
-	return thread->seeking_lock != NONEXISTENT_MUTEX;
-}
-
-
 /* returns 1 if thread is blocked, 0 otherwise. */
 int is_blocked(tcb *thread) {
-	return is_waiting_on_a_thread(thread) || is_waiting_on_a_mutex(thread);
+	return is_waiting_on_a_thread(thread);
 }
 
 /* Returns 1 if all threads except the one to be scheduled are waiting to join, 0 otherwise. */
@@ -670,19 +547,6 @@ int remaining_threads_blocked(tcb *to_be_scheduled) {
 	// Since all other threads are blocked, no point in starting a timer
 	// to interrupt this one.
 	return 1;
-}
-
-int broadcast_lock_release(worker_mutex_t mutex) {
-	int result = 0;
-    Node *ptr = tcbs->front;
-	while(ptr) {
-		if (ptr->data->seeking_lock == mutex) {
-			ptr->data->seeking_lock = NONEXISTENT_MUTEX;
-			result = 1;
-		}
-		ptr = ptr->next;
-	}
-	return result;
 }
 
 
@@ -739,34 +603,6 @@ void print_queue(Queue* q_ptr) {
 }
 
 
-void print_mutex_list(mutex_list *mutexes) {
-    mutex_node *ptr = mutexes->front;
-    printf("Printing lst of mutexes: \n");
-    
-    while(ptr) {
-        printf("%d held by %d.\n", ptr->lock_num, ptr->holder_tid);
-        ptr = ptr->next;
-    }
-
-    printf("\n");
-}
-
-/* Returns NULL if target is not a currently initialized mutex, mutex_node* otherwise. */
-mutex_node* fetch_from_mutexes(worker_mutex_t target) {
-	assert(mutexes);
-
-	mutex_node *ptr = mutexes->front;
-	while (ptr) {
-		if (ptr->lock_num == target) {
-			return ptr;
-		}
-		ptr = ptr->next;
-	}
-
-	return NULL;
-}
-
-
 int isUninitializedList(List *lst_ptr) {
     return !lst_ptr;
 }
@@ -783,6 +619,20 @@ int compare_usage(tcb *to_be_inserted, tcb *curr) {
 	return to_be_inserted->quantums_elapsed < curr->quantums_elapsed 
 		|| (to_be_inserted->quantums_elapsed == curr->quantums_elapsed &&
 			to_be_inserted->quantum_amt_used <= curr->quantum_amt_used);
+}
+
+/* 1 if sorted in ascending order of usage, 0 otherwise.*/
+int sorted_by_usage(List *lst_ptr) {
+	assert(lst_ptr);
+
+	Node *ptr, *prev;
+	for (ptr = lst_ptr->front->next, prev = lst_ptr->front; ptr; ptr = ptr->next, prev = prev->next) {
+		if (!compare_usage(prev->data, ptr->data)) {
+			return 0;
+		}
+	}
+
+	return 1;
 }
 
 /* Inserts to front of list. */
@@ -822,9 +672,12 @@ void insert_by_usage(List *lst_ptr, tcb *to_be_inserted) {
 		}
 	}
 
-	assert(contains(lst_ptr, to_be_inserted->thread_id));
     ++(lst_ptr->size);
+
+	assert(sorted_by_usage(lst_ptr));
+	assert(contains(lst_ptr, to_be_inserted->thread_id));
 }
+
 
 void insert_at_front(List *lst_ptr, tcb *to_be_inserted) {
 	assert(!isUninitializedList(lst_ptr));
@@ -835,6 +688,7 @@ void insert_at_front(List *lst_ptr, tcb *to_be_inserted) {
     ++(lst_ptr->size);
     lst_ptr->front = item;
 }
+
 
 /* Returns valid ptr if the list contains the worker, else returns NULL.*/
 tcb* contains(List *lst_ptr, worker_t target) {
@@ -886,20 +740,17 @@ tcb* remove_from(List *lst_ptr, worker_t target) {
 }
 
 
-tcb* find_first_unblocked_thread(List *lst_ptr) {
-	tcb *first_unblocked_thread = NULL;
-	
+worker_t find_first_unblocked_thread(List *lst_ptr) {
 	Node *ptr;
+
+	// Traverse ordered list.
 	for (ptr = lst_ptr->front; ptr; ptr = ptr->next) {
 		if (!is_blocked(ptr->data)) {
-			first_unblocked_thread = ptr->data;
-			break;
+			return ptr->data->thread_id;
 		}
 	}
 
-	// Must exist at least one unblocked thread.
-	assert(first_unblocked_thread);
-    return first_unblocked_thread;
+	return NONEXISTENT_THREAD;
 }
 
 

@@ -78,7 +78,12 @@
 #include <stdatomic.h>
 
 typedef unsigned int worker_t;
-typedef unsigned int worker_mutex_t;
+typedef unsigned int mutex_t;
+
+typedef struct worker_mutex_t {
+    mutex_t mutex_num;
+    bool is_acquired;
+} worker_mutex_t;
 
 typedef struct TCB {
 	worker_t 		thread_id;
@@ -120,17 +125,6 @@ typedef struct Queue {
     unsigned short size;
     struct Node *rear;
 } Queue;
-
-typedef struct mutex_node {
-    worker_mutex_t lock_num;
-	worker_t holder_tid;
-    struct mutex_node *next;
-} mutex_node;
-
-/* Singular Linked List */
-typedef struct mutex_list {
-    struct mutex_node *front;
-} mutex_list;
 
 /* Function Declarations: */
 
@@ -227,33 +221,10 @@ int is_held_by(worker_t this_tid, worker_mutex_t target);
 
 int is_waiting_on_a_thread(tcb *thread);
 
-int is_waiting_on_a_mutex(tcb *thread);
-
 int is_blocked(tcb *thread);
 
 int remaining_threads_blocked();
 
-/**
- * Once a thread relinquishes the lock, there may
- * still exist a group of threads waiting to acquire
- * that lock. The scheduler would have skipped those
- * threads.
- * 
- * In order to give one of these a chance to acquire the lock,
- * (to let the Scheduler schedule one thread among the group),
- * we change their tcb state s.t. it reflects that they should
- * not be skipped. Note that, the first thread from that group
- * waiting on the mutex this thread relinquished will gain
- * control over the lock. The remainder, if scheduled before the new
- * acquirer gives up the lock, will go back into a waiting state
- * by changing their seeking_lock. 
- * 
- * (See worker_mutex_lock for more details.)
- * 
- * broadcast returns 1 if at least one other thread was waiting
- * on this mutex, 0 if no other threads were waiting on mutex.
-*/
-int broadcast_lock_release(worker_mutex_t mutex);
 
 /**
  * There may be a group of threads waiting for (joined on) the current thread
@@ -274,19 +245,16 @@ void alert_waiting_threads(worker_t ended, void *ended_retval_ptr);
 
 void print_list(List *lst_ptr);
 void print_queue(Queue* q_ptr);
-void print_mutex_list(mutex_list *mutexes);
-
-/* Returns NULL if target is not a currently initialized mutex, mutex_node* otherwise. */
-mutex_node* fetch_from_mutexes(worker_mutex_t target);
 
 int isUninitializedList(List *lst_ptr);
 int isEmptyList(List *lst_ptr);
 int compare_usage(tcb *to_be_inserted, tcb *curr);
+int sorted_by_usage(List *lst_ptr);
 void insert_by_usage(List *lst_ptr, tcb *to_be_inserted);
 void insert_at_front(List *lst_ptr, tcb *to_be_inserted);
 tcb* contains(List *lst_ptr, worker_t target);
 tcb* remove_from(List *lst_ptr, worker_t target);
-tcb* find_first_unblocked_thread(List *lst_ptr);
+worker_t find_first_unblocked_thread(List *lst_ptr);
 
 int isUninitialized(Queue *q_ptr);
 int isEmpty(Queue *q_ptr);
