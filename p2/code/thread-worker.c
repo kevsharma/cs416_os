@@ -338,6 +338,10 @@ void recompute_benchmarks() {
 	const double num_us_in_sec = 1000000;
 	const double num_ns_in_us = 1000;
 
+	const double runtime = 
+			(running->completion.tv_sec - running->first_scheduled.tv_sec) * num_us_in_sec + 
+			(running->completion.tv_nsec - running->first_scheduled.tv_nsec) / num_ns_in_us;
+
 	const double turnaround_time = 
 		(running->completion.tv_sec - running->arrival.tv_sec) * num_us_in_sec + 
 		(running->completion.tv_nsec - running->arrival.tv_nsec) / num_ns_in_us;
@@ -346,7 +350,8 @@ void recompute_benchmarks() {
 		(running->first_scheduled.tv_sec - running->arrival.tv_sec) * num_us_in_sec + 
 		(running->first_scheduled.tv_nsec - running->arrival.tv_nsec) / num_ns_in_us;
 
-	printf("Ended tid (%d) had TT:[%f] and RespT:[%f]\n", running->thread_id, turnaround_time, response_time);
+	printf("Ended tid (%d) had runtime: [%f] | TT:[%f] | RespT:[%f]\n", 
+	running->thread_id, runtime, turnaround_time, response_time);
 
 	double size_matters = (double) ended_tcbs->size;
 	avg_turn_time = (avg_turn_time * (size_matters - 1) + turnaround_time) / size_matters;
@@ -371,6 +376,7 @@ void timer_signal_handler(int signum) {
 	total_quantums_elapsed += 1; // Only used in MLFQ
 	running->quantum_amt_used = 0;
 	++preemptions;
+	printf("Ring ring \n");
 	swapcontext(running->uctx, scheduler);
 }
 
