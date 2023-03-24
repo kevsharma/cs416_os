@@ -57,9 +57,11 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 	new_tcb->ret_value = NULL;
 	new_tcb->join_tid = NONEXISTENT_THREAD; // not waiting on any thread
 	new_tcb->join_retval = NULL;
+
+	new_tcb->holding_a_lock = false;
+	new_tcb->preempted_while_holding_lock = false;
 	
 	new_tcb->quantums_elapsed = 0;
-	new_tcb->quantum_amt_used = 0;
 	new_tcb->time_quantum_used_up_fully = 0;
 	new_tcb->priority_level = 0;
 	new_tcb->previously_scheduled = 0;
@@ -88,24 +90,8 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 }
 
 int worker_yield() {
-	struct timespec curr_time;
-	clock_gettime(CLOCK_MONOTONIC, &curr_time);
-
-	const double num_us_in_sec = 1000000;
-	const double num_ns_in_us = 1000;
-
-	running->quantum_amt_used += 
-		(curr_time.tv_sec - running->time_of_last_scheduling.tv_sec) * num_us_in_sec + 
-		(curr_time.tv_nsec - running->time_of_last_scheduling.tv_nsec) / num_ns_in_us;
-	
-	if (running->quantum_amt_used >= TIME_QUANTUM) {
-		running->time_quantum_used_up_fully = 1;
-		running->quantum_amt_used = 0;
-
-		running->quantums_elapsed += 1;
-		total_quantums_elapsed += 1; // Only used in MLFQ.
-	}
-
+	running->quantums_elapsed += 1;
+	++total_quantums_elapsed;
 	return swapcontext(running->uctx, scheduler);
 }
 
@@ -154,26 +140,25 @@ int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t *mutexatt
 }
 
 int worker_mutex_lock(worker_mutex_t *mutex) {
-	// If there exists some worker with lesser used time quantum, yield.
-	// for (Node *ptr = tcbs->front; ptr; ptr = ptr->next) {
-	// 	if (running->quantums_elapsed < ptr->data->quantums_elapsed) {
-	// 		++yieldsS;
-	// 		worker_yield();
-	// 		break;
-	// 	}
-	// }
-    
 	/* Attempt to acquire lock. */
 	while(atomic_flag_test_and_set(&(mutex->is_acquired))) {
 		++yieldsS;
 		worker_yield();
 	}
 
+	running->holding_a_lock = true;
 	return 0;
 }
 
 int worker_mutex_unlock(worker_mutex_t *mutex) {	
-	atomic_flag_clear(&(mutex->is_acquired));	
+	atomic_flag_clear(&(mutex->is_acquired));
+	running->holding_a_lock = false;
+
+	if (running->preempted_while_holding_lock) {
+		running->preempted_while_holding_lock = false;
+		worker_yield();
+	}
+
 	return 0;
 }
 
@@ -219,9 +204,15 @@ static void sched_psjf() {
 			running->previously_scheduled = 1;
 		}
 		
-		set_timer(running->quantum_amt_used);
+		// Set timer: 
+		timer->it_interval.tv_sec = 0;
+		timer->it_interval.tv_usec = TIME_QUANTUM;
+		timer->it_value.tv_sec = 0;
+		timer->it_value.tv_usec = TIME_QUANTUM;
+		if (setitimer(ITIMER_PROF, timer, NULL) != 0) {
+			perror("Unable to properly set timer.\n");
+		}
 
-		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
 		++tot_cntx_switches; 
 		swapcontext(scheduler, running->uctx);
 	}
@@ -240,7 +231,6 @@ void boost_all_queues(){
 			tcb *curr_tcb = dequeue(all_queue[curr_level]);
 
 			//resets all information back to default
-			curr_tcb->quantum_amt_used = 0;
 			curr_tcb->time_quantum_used_up_fully = 0;
 			curr_tcb->priority_level = 0;
 
@@ -267,7 +257,6 @@ static void sched_mlfq() {
 		if (running != NULL) { // dont enqueue terminated job freed up by cleanup context.
 			if (running->time_quantum_used_up_fully) { // Preempted because used up time quantum
 				running->time_quantum_used_up_fully = 0;
-				running->quantum_amt_used = 0;
 				running->priority_level = (running->priority_level == (QUEUE_LEVELS - 1)) 
 					? running->priority_level : running->priority_level + 1;
 			}
@@ -307,9 +296,15 @@ static void sched_mlfq() {
 			running->previously_scheduled = 1;
 		}
 
-		set_timer(running->quantum_amt_used);
+		// Set timer: 
+		timer->it_interval.tv_sec = 0;
+		timer->it_interval.tv_usec = TIME_QUANTUM;
+		timer->it_value.tv_sec = 0;
+		timer->it_value.tv_usec = TIME_QUANTUM;
+		if (setitimer(ITIMER_PROF, timer, NULL) != 0) {
+			perror("Unable to properly set timer.\n");
+		}
 
-		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
 		++tot_cntx_switches; 
 		swapcontext(scheduler, running->uctx);
 	}
@@ -356,24 +351,20 @@ void recompute_benchmarks() {
 	avg_resp_time = (avg_resp_time * (size_matters - 1) + response_time) / size_matters;
 }
 
-/* One shot timer that will send SIGPROF signal after TIME_QUANTUM -remaining microseconds. */
-int set_timer(int remaining) {
-	timer->it_interval.tv_sec = 0;
-	timer->it_interval.tv_usec = 0;
-
-	timer->it_value.tv_sec = 0;
-	timer->it_value.tv_usec = TIME_QUANTUM;
-
-	return setitimer(ITIMER_PROF, timer, NULL);
-}
 
 /* Swaps the context to scheduler after a SIGPROF signal. */
 void timer_signal_handler(int signum) {
 	running->time_quantum_used_up_fully = 1;
 	running->quantums_elapsed += 1;
 	total_quantums_elapsed += 1; // Only used in MLFQ
-	running->quantum_amt_used = 0;
-	++preemptions;
+
+	if(running->thread_id != MAIN_THREAD)
+		++preemptions;
+
+	if (running->holding_a_lock) {
+		running->preempted_while_holding_lock = true;
+	}
+
 	swapcontext(running->uctx, scheduler);
 }
 
@@ -461,8 +452,11 @@ void init_library() {
 	running->uctx = (ucontext_t *) malloc(sizeof(ucontext_t));
 	running->thread_id = MAIN_THREAD;
 	running->join_tid = NONEXISTENT_THREAD;
+
+	running->holding_a_lock = false;
+	running->preempted_while_holding_lock = false;
+	
 	running->quantums_elapsed = 0;
-	running->quantum_amt_used = 0;
 	running->time_quantum_used_up_fully = 0;
 	running->priority_level = 0;
 	running->previously_scheduled = 0;
@@ -645,9 +639,7 @@ int isEmptyList(List *lst_ptr) {
 
 /* Returns 1 if to_be_inserted has less usage than curr, 0 otherwise. */
 int compare_usage(tcb *to_be_inserted, tcb *curr) {
-	return to_be_inserted->quantums_elapsed < curr->quantums_elapsed
-		 || (to_be_inserted->quantums_elapsed == curr->quantums_elapsed &&
-		 	to_be_inserted->quantum_amt_used <= curr->quantum_amt_used);
+	return to_be_inserted->quantums_elapsed <= curr->quantums_elapsed;
 }
 
 /* 1 if sorted in ascending order of usage, 0 otherwise.*/

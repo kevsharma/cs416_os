@@ -50,7 +50,7 @@
 /**
  * TIME_QUANTUM is the time in microseconds.
 */
-#define TIME_QUANTUM 10
+#define TIME_QUANTUM 100
 
 /**
  * QUEUE_LEVELS is the amount of priority queue levels that mlfq uses
@@ -93,17 +93,16 @@ typedef struct TCB {
 	void **			join_retval;	
 	worker_mutex_t	seeking_lock;	/* NONEXISTENT_MUTEX if not seeking to acquire a mutex. */
 
+    bool             holding_a_lock;
+    bool             preempted_while_holding_lock;
+
     /* Attributes used by Scheduler */
     unsigned int    quantums_elapsed;
-    unsigned int    quantum_amt_used;
-    struct timespec time_of_last_scheduling;
-    
-    /* For use in MLFQ*/
-    int             time_quantum_used_up_fully; 
-    int             priority_level;
+    int             time_quantum_used_up_fully;     /* For use in MLFQ*/
+    int             priority_level;                 /* For use in MLFQ*/
 
     /* Attributes used for Benchmarks */
-    int previously_scheduled;
+    int             previously_scheduled;
     struct timespec arrival;
     struct timespec first_scheduled;
     struct timespec completion;
@@ -190,7 +189,7 @@ void print_app_stats(void);
 void recompute_benchmarks();
 
 /* One shot timer that will send SIGPROF signal after TIME_QUANTUM microseconds. */
-int set_timer(int remaining);
+int set_timer();
 
 /* Swaps the context to scheduler after a SIGPROF signal. */
 void timer_signal_handler(int signum);
