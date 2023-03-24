@@ -50,7 +50,7 @@
 /**
  * TIME_QUANTUM is the time in microseconds.
 */
-#define TIME_QUANTUM 100
+#define TIME_QUANTUM 10000
 
 /**
  * QUEUE_LEVELS is the amount of priority queue levels that mlfq uses
