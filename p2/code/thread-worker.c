@@ -216,7 +216,7 @@ static void sched_psjf() {
 			running->previously_scheduled = 1;
 		}
 		
-		set_timer(running->quantum_amt_used);
+		assert(set_timer(running->quantum_amt_used) == 0);
 
 		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
 		++tot_cntx_switches; 
@@ -347,14 +347,14 @@ void recompute_benchmarks() {
 }
 
 /* One shot timer that will send SIGPROF signal after TIME_QUANTUM -remaining microseconds. */
-void set_timer(int remaining) {
+int set_timer(int remaining) {
 	timer->it_interval.tv_sec = 0;
 	timer->it_interval.tv_usec = 0;
 
 	timer->it_value.tv_sec = 0;
-	timer->it_value.tv_usec = remaining_threads_blocked(running) ? 0 : (TIME_QUANTUM - remaining);
+	timer->it_value.tv_usec = TIME_QUANTUM;
 
-	setitimer(ITIMER_PROF, timer, NULL);
+	return setitimer(ITIMER_PROF, timer, NULL);
 }
 
 /* Swaps the context to scheduler after a SIGPROF signal. */
@@ -372,7 +372,13 @@ void timer_signal_handler(int signum) {
 void register_handler() {
 	memset(sa, 0, sizeof(*sa));
 	sa->sa_handler = &timer_signal_handler;
-	sigaction(SIGPROF, sa, NULL);
+	
+	sigemptyset(&(sa->sa_mask));
+	sa->sa_flags = 0;
+
+	if (sigaction(SIGPROF, sa, NULL) != 0) {
+		perror("Couldn't register signal handler properly.");
+	}
 }
 
 
