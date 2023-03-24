@@ -69,9 +69,7 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 	new_tcb->uctx->uc_link = cleanup; // all workers must flow into cleanup
 	new_tcb->uctx->uc_stack.ss_size = STACK_SIZE;
 	new_tcb->uctx->uc_stack.ss_sp = malloc(STACK_SIZE);
-	sigset_t empty_signal_set;
-	sigemptyset(&empty_signal_set);
-	sigprocmask(SIG_SETMASK, &empty_signal_set, &(new_tcb->uctx->uc_sigmask));
+	new_tcb->uctx->uc_sigmask = running->uctx->uc_sigmask;
 	makecontext(new_tcb->uctx, (void *) function, 1, arg); 
 
 	clock_gettime(CLOCK_MONOTONIC, &new_tcb->arrival);
@@ -223,6 +221,18 @@ static void sched_psjf() {
 		
 		assert(set_timer(running->quantum_amt_used) == 0);
 
+		
+		////////////////////////////////////
+		sigset_t empty_signal_set;
+		sigemptyset(&empty_signal_set);
+		sigprocmask(SIG_SETMASK, &empty_signal_set, &(running->uctx->uc_sigmask));
+		timer->it_interval.tv_sec = 0;
+		timer->it_interval.tv_usec = 0;
+		timer->it_value.tv_sec = 0;
+		timer->it_value.tv_usec = 1000;
+		setitimer(ITIMER_PROF, timer, NULL);
+		////////////////////////////////////
+
 		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
 		++tot_cntx_switches; 
 		swapcontext(scheduler, running->uctx);
@@ -309,7 +319,13 @@ static void sched_mlfq() {
 			running->previously_scheduled = 1;
 		}
 
-		set_timer(running->quantum_amt_used);
+		////////////////////////////////////
+		timer->it_interval.tv_sec = 0;
+		timer->it_interval.tv_usec = 0;
+		timer->it_value.tv_sec = 0;
+		timer->it_value.tv_usec = 10;
+		setitimer(ITIMER_PROF, timer, NULL);
+		////////////////////////////////////
 
 		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
 		++tot_cntx_switches; 
@@ -376,7 +392,7 @@ void timer_signal_handler(int signum) {
 	total_quantums_elapsed += 1; // Only used in MLFQ
 	running->quantum_amt_used = 0;
 	++preemptions;
-	printf("Ring ring \n");
+	printf("Ring ring from TID (%d).\n", running->thread_id);
 	swapcontext(running->uctx, scheduler);
 }
 
