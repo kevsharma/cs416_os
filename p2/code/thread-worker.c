@@ -785,6 +785,20 @@ int compare_usage(tcb *to_be_inserted, tcb *curr) {
 			to_be_inserted->quantum_amt_used <= curr->quantum_amt_used);
 }
 
+/* 1 if sorted in ascending order of usage, 0 otherwise.*/
+int sorted_by_usage(List *lst_ptr) {
+	assert(lst_ptr);
+
+	Node *ptr, *prev;
+	for (ptr = lst_ptr->front->next, prev = lst_ptr->front; ptr; ptr = ptr->next, prev = prev->next) {
+		if (!compare_usage(prev->data, ptr->data)) {
+			return 0;
+		}
+	}
+
+	return 1;
+}
+
 /* Inserts to front of list. */
 void insert_by_usage(List *lst_ptr, tcb *to_be_inserted) {
     assert(!isUninitializedList(lst_ptr));
@@ -796,34 +810,34 @@ void insert_by_usage(List *lst_ptr, tcb *to_be_inserted) {
 
 	if (isEmptyList(lst_ptr)) {
 		lst_ptr->front = item;
-	} else if (lst_ptr->size == 1) {
+	} else {
 		if (compare_usage(to_be_inserted, lst_ptr->front->data)) {
 			item->next = lst_ptr->front;
 			lst_ptr->front = item;
 		} else {
-			lst_ptr->front->next = item;
-		}
-	} else {
-		// list has greater than 2 elements.
-		Node *ptr = lst_ptr->front->next;
-		Node *prev = lst_ptr->front;
-		int position_found = 0;
-		for (; ptr; ptr = ptr->next, prev = prev->next) {
-			if (compare_usage(to_be_inserted, ptr->data)) {
-				prev->next = item;
-				item->next = ptr;
-				position_found = 1;
-				break;
+			Node *ptr = lst_ptr->front->next;
+			Node *prev = lst_ptr->front;
+			int position_found = 0;
+			
+			for (; ptr; ptr = ptr->next, prev = prev->next) {
+				if (compare_usage(to_be_inserted, ptr->data)) {
+					prev->next = item;
+					item->next = ptr;
+					position_found = 1;
+					break;
+				}
 			}
-		}
 
-		if (!position_found) { 
-			prev->next = item; // appended to list.
+			if (!position_found) { 
+				prev->next = item; // appended to list.
+			}
 		}
 	}
 
-	assert(contains(lst_ptr, to_be_inserted->thread_id));
     ++(lst_ptr->size);
+
+	assert(sorted_by_usage(lst_ptr));
+	assert(contains(lst_ptr, to_be_inserted->thread_id));
 }
 
 void insert_at_front(List *lst_ptr, tcb *to_be_inserted) {
