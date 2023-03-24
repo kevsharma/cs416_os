@@ -153,7 +153,8 @@ int worker_mutex_init(worker_mutex_t *mutex, const pthread_mutexattr_t *mutexatt
 int worker_mutex_lock(worker_mutex_t *mutex) {
 	// If there exists some worker with lesser used time quantum, yield.
 	// for (Node *ptr = tcbs->front; ptr; ptr = ptr->next) {
-	// 	if (compare_usage(running, ptr->data)) {
+	// 	if (running->quantums_elapsed < ptr->data->quantums_elapsed) {
+	// 		++yieldsS;
 	// 		worker_yield();
 	// 		break;
 	// 	}
@@ -197,7 +198,7 @@ static void sched_psjf() {
 		// Handle new arrivals.
 		while(!isEmpty(q_arrival)) {
 			tcb *new_arrival = dequeue(q_arrival);
-			insert_by_usage(tcbs, new_arrival);
+			insert_at_front(tcbs, new_arrival);
 		}
 
 		if (running) { 	// Enqueue if worker didn't get cleaned.
@@ -628,9 +629,9 @@ int isEmptyList(List *lst_ptr) {
 
 /* Returns 1 if to_be_inserted has less usage than curr, 0 otherwise. */
 int compare_usage(tcb *to_be_inserted, tcb *curr) {
-	return to_be_inserted->quantums_elapsed < curr->quantums_elapsed 
-		|| (to_be_inserted->quantums_elapsed == curr->quantums_elapsed &&
-			to_be_inserted->quantum_amt_used <= curr->quantum_amt_used);
+	return to_be_inserted->quantums_elapsed < curr->quantums_elapsed
+		 || (to_be_inserted->quantums_elapsed == curr->quantums_elapsed &&
+		 	to_be_inserted->quantum_amt_used <= curr->quantum_amt_used);
 }
 
 /* 1 if sorted in ascending order of usage, 0 otherwise.*/
