@@ -219,19 +219,7 @@ static void sched_psjf() {
 			running->previously_scheduled = 1;
 		}
 		
-		assert(set_timer(running->quantum_amt_used) == 0);
-
-		
-		////////////////////////////////////
-		sigset_t empty_signal_set;
-		sigemptyset(&empty_signal_set);
-		sigprocmask(SIG_SETMASK, &empty_signal_set, &(running->uctx->uc_sigmask));
-		timer->it_interval.tv_sec = 0;
-		timer->it_interval.tv_usec = 0;
-		timer->it_value.tv_sec = 0;
-		timer->it_value.tv_usec = 1000;
-		setitimer(ITIMER_PROF, timer, NULL);
-		////////////////////////////////////
+		set_timer(running->quantum_amt_used);
 
 		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
 		++tot_cntx_switches; 
@@ -319,13 +307,7 @@ static void sched_mlfq() {
 			running->previously_scheduled = 1;
 		}
 
-		////////////////////////////////////
-		timer->it_interval.tv_sec = 0;
-		timer->it_interval.tv_usec = 0;
-		timer->it_value.tv_sec = 0;
-		timer->it_value.tv_usec = 10;
-		setitimer(ITIMER_PROF, timer, NULL);
-		////////////////////////////////////
+		set_timer(running->quantum_amt_used);
 
 		clock_gettime(CLOCK_MONOTONIC, &running->time_of_last_scheduling);
 		++tot_cntx_switches; 
@@ -366,8 +348,8 @@ void recompute_benchmarks() {
 		(running->first_scheduled.tv_sec - running->arrival.tv_sec) * num_us_in_sec + 
 		(running->first_scheduled.tv_nsec - running->arrival.tv_nsec) / num_ns_in_us;
 
-	printf("Ended tid (%d) had runtime: [%f] | TT:[%f] | RespT:[%f]\n", 
-	running->thread_id, runtime, turnaround_time, response_time);
+	printf("Ended tid (%d) had %d quantums |  runtime: [%f] | TT:[%f] | RespT:[%f]\n", 
+	running->thread_id, running->quantums_elapsed, runtime, turnaround_time, response_time);
 
 	double size_matters = (double) ended_tcbs->size;
 	avg_turn_time = (avg_turn_time * (size_matters - 1) + turnaround_time) / size_matters;
@@ -380,7 +362,7 @@ int set_timer(int remaining) {
 	timer->it_interval.tv_usec = 0;
 
 	timer->it_value.tv_sec = 0;
-	timer->it_value.tv_usec = 10;
+	timer->it_value.tv_usec = TIME_QUANTUM;
 
 	return setitimer(ITIMER_PROF, timer, NULL);
 }
@@ -392,7 +374,6 @@ void timer_signal_handler(int signum) {
 	total_quantums_elapsed += 1; // Only used in MLFQ
 	running->quantum_amt_used = 0;
 	++preemptions;
-	printf("Ring ring from TID (%d).\n", running->thread_id);
 	swapcontext(running->uctx, scheduler);
 }
 
