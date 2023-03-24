@@ -69,18 +69,22 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 	new_tcb->uctx->uc_link = cleanup; // all workers must flow into cleanup
 	new_tcb->uctx->uc_stack.ss_size = STACK_SIZE;
 	new_tcb->uctx->uc_stack.ss_sp = malloc(STACK_SIZE);
+	sigset_t empty_signal_set;
+	sigemptyset(&empty_signal_set);
+	sigprocmask(SIG_SETMASK, &empty_signal_set, &(new_tcb->uctx->uc_sigmask));
 	makecontext(new_tcb->uctx, (void *) function, 1, arg); 
 
 	clock_gettime(CLOCK_MONOTONIC, &new_tcb->arrival);
 
-	// Synchronize access to shared resources.
-	sigset_t set = sigset_init();
-	sigprocmask(SIG_SETMASK, &set, NULL);
-		
-	enqueue(q_arrival, new_tcb);
+	// Synchronize access to shared resource ended_tcbs list
+	sigset_t block_prof_set = sigset_init();
+	sigset_t oldset;
+	sigprocmask(SIG_BLOCK, &block_prof_set, &oldset);
 	
-	// Finished accessing shared resources.
-	sigprocmask(SIG_UNBLOCK, &set, NULL);
+	enqueue(q_arrival, new_tcb);
+
+	// Completed using shared resource.
+	sigprocmask(SIG_SETMASK, &oldset, NULL);	
 
 	return 0;
 }
@@ -113,13 +117,14 @@ void worker_exit(void *value_ptr) {
 
 int worker_join(worker_t thread, void **value_ptr) {
 	// Synchronize access to shared resource ended_tcbs list
-	sigset_t set = sigset_init();
-	sigprocmask(SIG_SETMASK,&set,NULL);
+	sigset_t block_prof_set = sigset_init();
+	sigset_t oldset;
+	sigprocmask(SIG_BLOCK, &block_prof_set, &oldset);
 	
 	tcb *waiting_on_tcb_already_ended = contains(ended_tcbs, thread);
 	
 	// Completed using shared resource.
-	sigprocmask(SIG_UNBLOCK,&set, NULL);
+	sigprocmask(SIG_SETMASK, &oldset, NULL);
 
 	/**
 	 * Assumptions must not be made about how the scheduler interleaves
@@ -341,6 +346,8 @@ void recompute_benchmarks() {
 		(running->first_scheduled.tv_sec - running->arrival.tv_sec) * num_us_in_sec + 
 		(running->first_scheduled.tv_nsec - running->arrival.tv_nsec) / num_ns_in_us;
 
+	printf("Ended tid (%d) had TT:[%f] and RespT:[%f]\n", running->thread_id, turnaround_time, response_time);
+
 	double size_matters = (double) ended_tcbs->size;
 	avg_turn_time = (avg_turn_time * (size_matters - 1) + turnaround_time) / size_matters;
 	avg_resp_time = (avg_resp_time * (size_matters - 1) + response_time) / size_matters;
@@ -352,7 +359,7 @@ int set_timer(int remaining) {
 	timer->it_interval.tv_usec = 0;
 
 	timer->it_value.tv_sec = 0;
-	timer->it_value.tv_usec = TIME_QUANTUM;
+	timer->it_value.tv_usec = 10;
 
 	return setitimer(ITIMER_PROF, timer, NULL);
 }
