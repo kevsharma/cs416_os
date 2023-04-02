@@ -1,13 +1,10 @@
 #include <stdbool.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include "../my_vm.h"
 
 #define SIZE 5
 #define ARRAY_SIZE 400
 
-int main() {
-
+int test_original() {
     printf("Allocating three arrays of %d bytes\n", ARRAY_SIZE);
 
     void *a = t_malloc(ARRAY_SIZE);
@@ -71,3 +68,16 @@ int main() {
 
     return 0;
 }
+
+int test_pagingScheme() {
+    paging_scheme_t *paging_scheme = malloc(sizeof(paging_scheme_t));
+    init_paging_scheme(paging_scheme);
+    print_paging_scheme(paging_scheme);
+}
+
+int main() {
+    test_pagingScheme();
+    // test_original();
+}
+
+
