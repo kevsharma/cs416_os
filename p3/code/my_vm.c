@@ -1,5 +1,10 @@
 #include "my_vm.h"
 
+paging_scheme_t *paging_scheme;
+pde_t *ptbr; /* Page table base register - root page dir address. */
+char *frame_bitmap;
+
+
 /*
 Function responsible for allocating and setting your physical memory 
 */
@@ -8,10 +13,24 @@ void set_physical_mem() {
     //Allocate physical memory using mmap or malloc; this is the total size of
     //your memory you are simulating
 
-    
     //HINT: Also calculate the number of physical and virtual pages and allocate
     //virtual and physical bitmaps and initialize them
 
+    assert(!paging_scheme);
+    paging_scheme = (paging_scheme_t *) malloc(sizeof(paging_scheme_t));
+    init_paging_scheme(paging_scheme);
+
+    assert(!ptbr);
+    ptbr = (pde_t *) malloc(paging_scheme->page_dir * sizeof(pde_t));
+    memset(ptbr, 0, paging_scheme->page_dir * sizeof(pde_t));
+    
+    assert(!frame_bitmap);
+    size_t fb_size = (1 << (short) paging_scheme->chars_for_frame_bitmap) * sizeof(char);
+    frame_bitmap = (char *) malloc(fb_size);
+    memset(frame_bitmap, 0, fb_size);
+
+    // Register clean up function. 
+    atexit(clean_my_vm);
 }
 
 
@@ -94,17 +113,14 @@ int page_map(pde_t *pgdir, void *va, void *pa) {
 }
 
 
-/*Function that gets the next available page
-*/
+/* Function that gets the next available page */
 void *get_next_avail(int num_pages) {
  
     //Use virtual address bitmap to find the next free page
 }
 
 
-/* Function responsible for allocating pages
-and used by the benchmark
-*/
+/* Function responsible for allocating pages and used by the benchmark */
 void *t_malloc(unsigned int num_bytes) {
 
     /* 
@@ -121,8 +137,7 @@ void *t_malloc(unsigned int num_bytes) {
     return NULL;
 }
 
-/* Responsible for releasing one or more memory pages using virtual address (va)
-*/
+/* Responsible for releasing one or more memory pages using virtual address (va) */
 void t_free(void *va, int size) {
 
     /* Part 1: Free the page table entries starting from this virtual address
@@ -200,4 +215,46 @@ void mat_mult(void *mat1, void *mat2, int size, void *answer) {
 }
 
 
+num_bits_t num_bits_needed_to_encode(unsigned long val) {
+    num_bits_t n;
+    for (n = 0; val; val >>= 1, ++n);
+    return n - 1;
+}
 
+void init_paging_scheme(paging_scheme_t *ps) {
+    ps->va_space = 32;
+    ps->pa_space = num_bits_needed_to_encode(MEMSIZE);
+
+    ps->offset = num_bits_needed_to_encode(PGSIZE);
+    ps->max_physical_pages = ps->pa_space - ps->offset;
+
+    ps->page_table = num_bits_needed_to_encode(PGSIZE / sizeof(pte_t));
+    ps->page_dir = ps->max_physical_pages - ps->page_table;
+    
+    ps->chars_for_frame_bitmap = ps->max_physical_pages - 3;
+}
+
+void print_paging_scheme(paging_scheme_t *ps) {
+    printf("Please verify that the following is correct:\n");
+    printf("============================================\n");
+    printf("(*) Page Size: %d\n\n", PGSIZE);
+
+    printf("(*) Bits for Virtual Address Space: %hd\n", ps->va_space);
+    printf("(*) Bits for Physical Address Space: %hd\n\n", ps->pa_space);
+
+    printf("(*) Offset bits into Page: %hd\n", ps->offset);
+    printf("(*) Max # of physical pages: %hd\n\n", ps->max_physical_pages);
+
+    printf("(*) Page Table # of bits: %hd\n", ps->page_table);
+    printf("(*) Page Directory # of bits: %hd\n\n", ps->page_dir);
+    
+    printf("(*) Frame bitmap # of bits: %hd\n", ps->chars_for_frame_bitmap);
+    printf("============================================\n");
+}
+
+/* Registered with atexit during vm setup. */
+void clean_my_vm(void) {
+    free(paging_scheme);
+    free(ptbr);
+    free(frame_bitmap);
+}
