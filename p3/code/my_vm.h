@@ -65,6 +65,17 @@ typedef struct {
     num_bits_t chars_for_frame_bitmap;    // max_pages - 3 {2^3 per char}
 } paging_scheme_t;
 
+typedef struct {
+    unsigned long byte_offset;
+    unsigned long pte_offset;
+    unsigned long pde_offset;    
+} virtual_addr_t;
+
+virtual_addr_t extract_from(void *va);
+bool is_valid_virtual_address(virtual_addr_t vaddy);
+pte_t* fetch_frame_from(virtual_addr_t vaddy);
+void* fetch_pa_from(virtual_addr_t vaddy);
+
 num_bits_t num_bits_needed_to_encode(unsigned long val);
 void init_paging_scheme(paging_scheme_t *ps);
 void print_paging_scheme(paging_scheme_t *ps);

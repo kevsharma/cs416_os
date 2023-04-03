@@ -21,8 +21,9 @@ void set_physical_mem() {
     init_paging_scheme(paging_scheme);
 
     assert(!ptbr);
-    ptbr = (pde_t *) malloc(paging_scheme->page_dir * sizeof(pde_t));
-    memset(ptbr, 0, paging_scheme->page_dir * sizeof(pde_t));
+    size_t pgdir_size = (1 << (short) paging_scheme->page_dir) * sizeof(pde_t *);
+    ptbr = (pde_t *) malloc(pgdir_size);
+    memset(ptbr, 0, pgdir_size);
     
     assert(!frame_bitmap);
     size_t fb_size = (1 << (short) paging_scheme->chars_for_frame_bitmap) * sizeof(char);
@@ -76,6 +77,41 @@ void print_TLB_missrate() {
     fprintf(stderr, "TLB miss rate %lf \n", miss_rate);
 }
 
+virtual_addr_t extract_from(void *va) {
+    // Assuming 32 bits.
+    unsigned long val = (unsigned long) va;
+    virtual_addr_t vaddy;
+    
+    // Get offset bits.
+    vaddy.byte_offset = val & ((1 << paging_scheme->offset) - 1);
+    
+    // Get top page_dir number of bits.
+    int k = 32 - paging_scheme->page_dir;
+    vaddy.pde_offset = (((~0 << k) & val) >> k);
+
+    // Get middle page_table number of bits.
+    val <<= paging_scheme->page_dir;
+    k = 32 - paging_scheme->page_table;
+    vaddy.pte_offset = (((~0 << k) & val) >> k);
+
+    return vaddy;
+}
+
+bool is_valid_virtual_address(virtual_addr_t vaddy) {
+    // TO-DO;
+    return true;
+}
+
+pte_t* fetch_frame_from(virtual_addr_t vaddy) {
+    assert(is_valid_virtual_address(vaddy));
+    pde_t *intermediate_dir = (pde_t *) *(ptbr + vaddy.pde_offset);
+    pte_t *frame = (pte_t *) *(intermediate_dir + vaddy.pte_offset);
+    return frame;
+}
+
+void* fetch_pa_from(virtual_addr_t vaddy) {
+    return (void *) (fetch_frame_from(vaddy) + vaddy.byte_offset);
+}
 
 
 /*
@@ -83,6 +119,8 @@ The function takes a virtual address and page directories starting address and
 performs translation to return the physical address
 */
 pte_t *translate(pde_t *pgdir, void *va) {
+    virtual_addr_t vaddy = extract_from(va);
+
     /* Part 1 HINT: Get the Page directory index (1st level) Then get the
     * 2nd-level-page table index using the virtual address.  Using the page
     * directory index and page table index get the physical address.
@@ -90,7 +128,6 @@ pte_t *translate(pde_t *pgdir, void *va) {
     * Part 2 HINT: Check the TLB before performing the translation. If
     * translation exists, then you can return physical address from the TLB.
     */
-
 
     //If translation not successful, then return NULL
     return NULL; 
