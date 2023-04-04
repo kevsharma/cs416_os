@@ -69,15 +69,60 @@ int test_original() {
     return 0;
 }
 
-int test_pagingScheme() {
+void test_pagingScheme() {
     paging_scheme_t *paging_scheme = malloc(sizeof(paging_scheme_t));
     init_paging_scheme(paging_scheme);
     print_paging_scheme(paging_scheme);
 }
 
+void test_is_valid_va() {
+    // Uses paging_scheme - ensure initialized first.
+    // Assume 32 bits but max_bits = 30. Therefore, first 2 bits must not be set.
+    assert(!is_valid_va((void *)1500212803));   // va = 01011001011010110110111001000011
+    assert(is_valid_va((void *)963341891));     // va = 00111001011010110110111001000011
+    assert(is_valid_va((void *)500));
+    assert(!is_valid_va((void *)~0));
+
+    printf("\nIs valid va works. \n");
+}
+
+void test_virtualaddr_extract() {
+    // Uses paging_scheme - ensure initialized first.
+    virtual_addr_t v;
+    
+    // Test 1:
+    void *va = (void *) 1500212803;
+    // va = 01011001011010110110111001000011
+    // pde_offset = 0101100101 = 357 | ignore first two bits = 101
+    // pte_offset = 1010110110 = 694
+    // offset = 111001000011
+    extract_from((unsigned long) va, &v);
+    assert(v.pde_offset == 101);
+    assert(v.pte_offset == 694);
+    assert(v.byte_offset == 3651);
+
+    // Test 2:
+    va = (void *) 963341891;
+    // va = 00111001011010110110111001000011
+    // pde_offset = 0101100101 = 357 | ignore first two bits = 101
+    // pte_offset = 1010110110 = 694
+    // offset = 111001000011
+    extract_from((unsigned long) va, &v);
+    assert(v.pde_offset == 229);
+    assert(v.pte_offset == 694);
+    assert(v.byte_offset == 3651);
+
+    printf("\nVirtual address extract_from function works.\n");
+}
+
 int main() {
+    set_physical_mem();
+    printf("Running Tests: \n\n");
+
+    /* Put tests here: */
     test_pagingScheme();
-    // test_original();
+    test_is_valid_va();
+    test_virtualaddr_extract();
 }
 
 

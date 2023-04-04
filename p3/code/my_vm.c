@@ -52,13 +52,14 @@ int add_TLB(void *va, void *pa) {
  * Returns the physical page address.
  * Feel free to extend this function and change the return type.
  */
-pte_t * check_TLB(void *va) {
+pte_t* check_TLB(void *va) {
 
     /* Part 2: TLB lookup code here */
 
 
 
    /*This function should return a pte_t pointer*/
+   return NULL;
 }
 
 
@@ -77,60 +78,60 @@ void print_TLB_missrate() {
     fprintf(stderr, "TLB miss rate %lf \n", miss_rate);
 }
 
-virtual_addr_t extract_from(void *va) {
-    // Assuming 32 bits.
-    unsigned long val = (unsigned long) va;
-    virtual_addr_t vaddy;
-    
+/* Extract offsets from va. This function assumes:
+ * - 32 bit virtual address space;
+ * - the virtual address is valid.
+ */
+void extract_from(unsigned long va, virtual_addr_t *vaddy) {
     // Get offset bits.
-    vaddy.byte_offset = val & ((1 << paging_scheme->offset) - 1);
-    
-    // Get top page_dir number of bits.
-    int k = 32 - paging_scheme->page_dir;
-    vaddy.pde_offset = (((~0 << k) & val) >> k);
+    vaddy->byte_offset = va & ((1 << paging_scheme->offset) - 1);
 
     // Get middle page_table number of bits.
-    val <<= paging_scheme->page_dir;
-    k = 32 - paging_scheme->page_table;
-    vaddy.pte_offset = (((~0 << k) & val) >> k);
+    va >>= paging_scheme->offset;
+    vaddy->pte_offset = va & ((1 << paging_scheme->page_table) - 1);
 
-    return vaddy;
+    // Get top page_dir number of bits.
+    va >>= paging_scheme->page_table;
+    vaddy->pde_offset = va & ((1 << paging_scheme->page_dir) - 1);
 }
 
-bool is_valid_virtual_address(virtual_addr_t vaddy) {
-    // TO-DO;
-    return true;
+bool is_valid_va(void *va) {
+    return (((unsigned long) va) >> paging_scheme->max_bits) == 0;
 }
 
-pte_t* fetch_frame_from(virtual_addr_t vaddy) {
-    assert(is_valid_virtual_address(vaddy));
+// To-DO ---> Test THIS (maybe after doing malloc/free).
+/* If va is invalid, returns NULL. */
+pte_t* fetch_frame_from(void *va) {
+    if (!is_valid_va(va)) {
+        return NULL;
+    }
+
+    virtual_addr_t vaddy;
+    extract_from((unsigned long) va, &vaddy);
     pde_t *intermediate_dir = (pde_t *) *(ptbr + vaddy.pde_offset);
     pte_t *frame = (pte_t *) *(intermediate_dir + vaddy.pte_offset);
     return frame;
 }
 
-void* fetch_pa_from(virtual_addr_t vaddy) {
-    return (void *) (fetch_frame_from(vaddy) + vaddy.byte_offset);
+void* fetch_pa_from(void *va) {
+    pte_t *frame = fetch_frame_from(va);
+    if(frame == NULL) {
+        return NULL;
+    }
+
+    virtual_addr_t vaddy;
+    extract_from((unsigned long) va, &vaddy);
+    return (void *) (frame + vaddy.byte_offset);
 }
 
 
 /*
 The function takes a virtual address and page directories starting address and
-performs translation to return the physical address
+performs translation to return the physical address. Returns NULL if va is an invalid virtual address.
 */
 pte_t *translate(pde_t *pgdir, void *va) {
-    virtual_addr_t vaddy = extract_from(va);
-
-    /* Part 1 HINT: Get the Page directory index (1st level) Then get the
-    * 2nd-level-page table index using the virtual address.  Using the page
-    * directory index and page table index get the physical address.
-    *
-    * Part 2 HINT: Check the TLB before performing the translation. If
-    * translation exists, then you can return physical address from the TLB.
-    */
-
-    //If translation not successful, then return NULL
-    return NULL; 
+    pte_t *cached_frame = check_TLB(va);
+    return cached_frame ? cached_frame : fetch_frame_from(va);
 }
 
 
@@ -159,14 +160,13 @@ void *get_next_avail(int num_pages) {
 
 /* Function responsible for allocating pages and used by the benchmark */
 void *t_malloc(unsigned int num_bytes) {
-
-    /* 
-     * HINT: If the physical memory is not yet initialized, then allocate and initialize.
-     */
+    // Init supporting structs if called for the first time:
+    if (!paging_scheme) {
+        set_physical_mem();
+    }
 
    /* 
-    * HINT: If the page directory is not initialized, then initialize the
-    * page directory. Next, using get_next_avail(), check if there are free pages. If
+    * HINT: Next, using get_next_avail(), check if there are free pages. If
     * free pages are available, set the bitmaps and map a new page. Note, you will 
     * have to mark which physical pages are used. 
     */
@@ -261,14 +261,18 @@ num_bits_t num_bits_needed_to_encode(unsigned long val) {
 void init_paging_scheme(paging_scheme_t *ps) {
     ps->va_space = 32;
     ps->pa_space = num_bits_needed_to_encode(MEMSIZE);
-
+    ps->max_bits = ps->pa_space < ps->va_space ? ps->pa_space : ps->va_space;
+    
     ps->offset = num_bits_needed_to_encode(PGSIZE);
-    ps->max_physical_pages = ps->pa_space - ps->offset;
+    ps->max_pages = ps->max_bits - ps->offset;
 
     ps->page_table = num_bits_needed_to_encode(PGSIZE / sizeof(pte_t));
-    ps->page_dir = ps->max_physical_pages - ps->page_table;
+    ps->page_dir = ps->max_pages - ps->page_table;
     
-    ps->chars_for_frame_bitmap = ps->max_physical_pages - 3;
+    ps->chars_for_frame_bitmap = ps->max_pages - 3;
+
+    assert(ps->max_pages == (ps->page_dir + ps->page_table));
+    assert(ps->max_bits == (ps->max_pages + ps->offset));
 }
 
 void print_paging_scheme(paging_scheme_t *ps) {
@@ -278,9 +282,10 @@ void print_paging_scheme(paging_scheme_t *ps) {
 
     printf("(*) Bits for Virtual Address Space: %hd\n", ps->va_space);
     printf("(*) Bits for Physical Address Space: %hd\n\n", ps->pa_space);
+    printf("(*) Max bits for addressing: %hd\n\n", ps->max_bits);
 
     printf("(*) Offset bits into Page: %hd\n", ps->offset);
-    printf("(*) Max # of physical pages: %hd\n\n", ps->max_physical_pages);
+    printf("(*) Max # of pages: %hd\n\n", ps->max_pages);
 
     printf("(*) Page Table # of bits: %hd\n", ps->page_table);
     printf("(*) Page Directory # of bits: %hd\n\n", ps->page_dir);

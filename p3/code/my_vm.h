@@ -40,7 +40,7 @@ typedef struct {
 void set_physical_mem();
 pte_t* translate(pde_t *pgdir, void *va);
 int page_map(pde_t *pgdir, void *va, void* pa);
-bool check_in_tlb(void *va);
+pte_t* check_TLB(void *va);
 void put_in_tlb(void *va, void *pa);
 void *t_malloc(unsigned int num_bytes);
 void t_free(void *va, int size);
@@ -55,13 +55,14 @@ typedef short num_bits_t;
 typedef struct {
     num_bits_t va_space;            // log_2 (MAX_MEMSIZE)
     num_bits_t pa_space;            // log_2 (MEMSIZE)
-    
-    num_bits_t offset;              // log_2 (PGSIZE)
-    num_bits_t max_physical_pages;  // pa_space - offset
+    num_bits_t max_bits;            // min(va_space, pa_space)
 
+    num_bits_t offset;              // log_2 (PGSIZE)
+    num_bits_t max_pages;           // max_bits - offset
+    
     num_bits_t page_table;          // log_2 (PGSIZE / sizeof(pte_t))
     num_bits_t page_dir;            // max_pages - page_table
-
+    
     num_bits_t chars_for_frame_bitmap;    // max_pages - 3 {2^3 per char}
 } paging_scheme_t;
 
@@ -71,10 +72,10 @@ typedef struct {
     unsigned long pde_offset;    
 } virtual_addr_t;
 
-virtual_addr_t extract_from(void *va);
-bool is_valid_virtual_address(virtual_addr_t vaddy);
-pte_t* fetch_frame_from(virtual_addr_t vaddy);
-void* fetch_pa_from(virtual_addr_t vaddy);
+void extract_from(unsigned long va, virtual_addr_t *vaddy);
+bool is_valid_va(void *va);
+pte_t* fetch_frame_from(void *va);
+void* fetch_pa_from(void *va);
 
 num_bits_t num_bits_needed_to_encode(unsigned long val);
 void init_paging_scheme(paging_scheme_t *ps);
