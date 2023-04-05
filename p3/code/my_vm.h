@@ -89,6 +89,11 @@ bool is_valid_va(void *va);
 pte_t* fetch_frame_from(void *va);
 void* fetch_pa_from(void *va);
 
+unsigned long lowest_unset_bit(char c);
+void set_bit_for_frame(char *bitmap, unsigned long frame_number);
+void unset_bit_for_frame(char *bitmap, unsigned long frame_number);
+int first_available_frame(virtual_addr_t *candidate);
+
 void clean_my_vm(void);
 
 #endif

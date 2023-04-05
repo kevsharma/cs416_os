@@ -2,8 +2,8 @@
 
 paging_scheme_t *paging_scheme;
 pde_t *ptbr; /* Page table base register - root page dir address. */
-char *frame_bitmap;
 List *tlb_cache;
+char *frame_bitmap; // Orientation: Left to Right, /* Set third bit = 0010 */
 
 /*
 Function responsible for allocating and setting your physical memory 
@@ -377,6 +377,47 @@ void print_paging_scheme(paging_scheme_t *ps) {
     printf("(*) Frame bitmap # of bits: %hd\n", ps->chars_for_frame_bitmap);
     printf("============================================\n");
 }
+
+/* Returns position of first unset bit OR -1 if all bits set.*/
+unsigned long lowest_unset_bit(char c) {
+    unsigned long pos, set;
+    for(pos = 0; pos <= 7; ++pos) {
+        set = c & (1 << pos);
+        if (!set) {
+            return 7 - pos;
+        }
+    }
+
+    return -1;
+}
+
+void unset_bit_for_frame(char *bitmap, unsigned long frame_number) {
+    unsigned long dividend = frame_number / 8;
+    unsigned long remainder = frame_number % 8;
+    bitmap[dividend] &= ~(1 << (7 - remainder));
+}
+
+/* 0 if success and candidate populated, -1 if failed and candidate not found.*/
+int first_available_frame(virtual_addr_t *candidate) {
+    unsigned long i, position;
+    unsigned long num_chars = (1 << paging_scheme->chars_for_frame_bitmap);
+
+    for (i = 0; i < num_chars; ++i) {
+        position = lowest_unset_bit(frame_bitmap[i]);
+        if (position != -1) {
+            // Set the bit to indicate that frame will be in use.
+            frame_bitmap[i] |= (1 << (7 - position));
+
+            unsigned long frame_number = (i * 8 + (unsigned long) position);
+            extract_from(frame_number << paging_scheme->offset, candidate);
+            
+            return 0;
+        }
+    }
+    
+    return -1;
+}
+
 
 /* Registered with atexit during vm setup. */
 void clean_my_vm(void) {
