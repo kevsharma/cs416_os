@@ -215,8 +215,7 @@ The function takes a virtual address and page directories starting address and
 performs translation to return the physical address. Returns NULL if va is an invalid virtual address.
 */
 pte_t *translate(pde_t *pgdir, void *va) {
-    pte_t *cached_frame = check_TLB(va);
-    return cached_frame ? cached_frame : fetch_frame_from(va);
+    return check_TLB(va);
 }
 
 
