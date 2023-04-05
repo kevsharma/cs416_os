@@ -3,7 +3,7 @@
 paging_scheme_t *paging_scheme;
 pde_t *ptbr; /* Page table base register - root page dir address. */
 char *frame_bitmap;
-
+List *tlb_cache;
 
 /*
 Function responsible for allocating and setting your physical memory 
@@ -30,36 +30,121 @@ void set_physical_mem() {
     frame_bitmap = (char *) malloc(fb_size);
     memset(frame_bitmap, 0, fb_size);
 
+    assert(!tlb_cache);
+    tlb_cache = (List *) malloc(sizeof(List));
+    tlb_cache->size = 0;
+    tlb_cache->front = NULL;
+
     // Register clean up function. 
     atexit(clean_my_vm);
 }
 
 
-/*
- * Part 2: Add a virtual to physical page translation to the TLB.
- * Feel free to extend the function arguments or return type.
- */
-int add_TLB(void *va, void *pa) {
+/* Returns 1 if va1 and va2 point to the same frame, 0 otherwise.*/
+int equivalent_virtual_address(void *va1, void *va2) {
+    short rs = (short) paging_scheme->offset;
+    return ((unsigned long) va1 >> rs) == ((unsigned long) va2 >> rs);
+}
 
-    /*Part 2 HINT: Add a virtual to physical page translation to the TLB */
+/* Searches for tlb entry with key: (virtual address) va. 
+If found, removes from list and returns associated value (physical address).*/
+tlb_store* search_and_remove(void *target_va) {
+    if (tlb_cache->size >= 1) {
+        // Matches first item?
+        tlb_store *front = tlb_cache->front;
+        if (equivalent_virtual_address(front->virtual_address, target_va)) {
+            tlb_cache->front = front->next;
+            tlb_cache->size -= 1;
 
-    return -1;
+            front->next = NULL;
+            return front;
+        }
+
+        // Check remainder of list:
+        tlb_store *prev = front;
+        tlb_store *ptr = front->next;
+
+        while (ptr && !equivalent_virtual_address(ptr->virtual_address, target_va)) {
+            prev = prev->next;
+            ptr = ptr->next;
+        }
+
+        if (ptr) {
+            prev->next = ptr->next;
+            tlb_cache->size -= 1;
+            
+            ptr->next = NULL;
+            return ptr;
+        }
+    }
+
+    return NULL;
+}
+
+void evict_lru_cached_entry() {
+    if (tlb_cache->size == 0) {
+        return;
+    } else if (tlb_cache->size == 1) {
+        tlb_cache->size -= 1;
+        free(tlb_cache->front);
+        tlb_cache->front = NULL;
+        return;
+    }
+    
+    // TLB cache holds more than one entry:
+    tlb_store *prev = tlb_cache->front;
+    tlb_store *ptr = prev->next;
+
+    while (ptr->next) {
+        prev = prev->next;
+        ptr = ptr->next;
+    }
+
+    // ptr points to last node (remove this node):
+    prev->next = NULL;
+    tlb_cache->size -= 1;
+    free(ptr);
+}
+
+/* Part 2: Add a virtual to physical page translation to the TLB.*/
+void add_to_TLB(void *va, pte_t *frame) {
+    if (tlb_cache->size == TLB_ENTRIES) {
+        evict_lru_cached_entry();
+    }
+
+    tlb_store *item = (tlb_store *) malloc(sizeof(tlb_store));
+    item->virtual_address = va;
+    item->frame = frame;
+    item->next = tlb_cache->front;
+
+    tlb_cache->front = item;
+    tlb_cache->size += 1;
 }
 
 
-/*
- * Part 2: Check TLB for a valid translation.
- * Returns the physical page address.
- * Feel free to extend this function and change the return type.
- */
+/* Part 2: Check TLB for a valid translation. Returns the physical page address. */
 pte_t* check_TLB(void *va) {
+    if (!is_valid_va(va)) {
+        return NULL;
+    }
 
-    /* Part 2: TLB lookup code here */
-
-
-
-   /*This function should return a pte_t pointer*/
-   return NULL;
+    tlb_store *target_tlb = search_and_remove(va);
+    if (target_tlb) {
+        // Add the frame to the front since it has become the most recently used.
+        target_tlb->next = tlb_cache->front;
+        tlb_cache->front = target_tlb;
+        tlb_cache->size += 1;
+        return target_tlb->frame;
+    } else {
+        // No such translation in Cache. Add to valid but uncached va.
+        pte_t *target_frame = fetch_frame_from(va);
+        if (target_frame) {
+            add_to_TLB(va, target_frame);
+            return target_frame;
+        } else {
+            return NULL;
+        }
+    }
 }
 
 
@@ -299,4 +384,13 @@ void clean_my_vm(void) {
     free(paging_scheme);
     free(ptbr);
     free(frame_bitmap);
+
+    while (tlb_cache->size) {
+        tlb_store *front = tlb_cache->front;
+        tlb_cache->front = front->next;
+        tlb_cache->size -= 1;
+        free(front);
+    }
+
+    free(tlb_cache);
 }
