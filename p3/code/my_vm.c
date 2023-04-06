@@ -180,6 +180,11 @@ void extract_from(unsigned long va, virtual_addr_t *vaddy) {
     vaddy->pde_offset = va & ((1 << paging_scheme->page_dir) - 1);
 }
 
+void* reconvert(virtual_addr_t *vaddy) {
+    return (void *) ((((vaddy->pde_offset << paging_scheme->page_table) 
+    | vaddy->pte_offset) << paging_scheme->offset) | vaddy->byte_offset);
+}
+
 bool is_valid_va(void *va) {
     return (((unsigned long) va) >> paging_scheme->max_bits) == 0;
 }
@@ -194,8 +199,7 @@ pte_t* fetch_frame_from(void *va) {
     virtual_addr_t vaddy;
     extract_from((unsigned long) va, &vaddy);
     pde_t *intermediate_dir = (pde_t *) *(ptbr + vaddy.pde_offset);
-    pte_t *frame = (pte_t *) *(intermediate_dir + vaddy.pte_offset);
-    return frame;
+    return (intermediate_dir + vaddy.pte_offset);
 }
 
 void* fetch_pa_from(void *va) {
@@ -226,7 +230,6 @@ directory to see if there is an existing mapping for a virtual address. If the
 virtual address is not present, then a new entry will be added
 */
 int page_map(pde_t *pgdir, void *va, void *pa) {
-
     /*HINT: Similar to translate(), find the page directory (1st level)
     and page table (2nd-level) indices. If no mapping exists, set the
     virtual to physical mapping */
@@ -235,10 +238,13 @@ int page_map(pde_t *pgdir, void *va, void *pa) {
 }
 
 
+
 /* Function that gets the next available page */
 void *get_next_avail(int num_pages) {
- 
     //Use virtual address bitmap to find the next free page
+    virtual_addr_t next_available_page;
+    int success = first_available_frame(&next_available_page);
+    return success ? reconvert(&next_available_page) : NULL;
 }
 
 
@@ -397,7 +403,7 @@ void unset_bit_for_frame(char *bitmap, unsigned long frame_number) {
     bitmap[dividend] &= ~(1 << (7 - remainder));
 }
 
-/* 0 if success and candidate populated, -1 if failed and candidate not found.*/
+/* 1 if success and candidate populated, 0 if failed and candidate not found.*/
 int first_available_frame(virtual_addr_t *candidate) {
     unsigned long i, position;
     unsigned long num_chars = (1 << paging_scheme->chars_for_frame_bitmap);
@@ -411,11 +417,11 @@ int first_available_frame(virtual_addr_t *candidate) {
             unsigned long frame_number = (i * 8 + (unsigned long) position);
             extract_from(frame_number << paging_scheme->offset, candidate);
             
-            return 0;
+            return 1;
         }
     }
     
-    return -1;
+    return 0;
 }
 
 

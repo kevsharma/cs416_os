@@ -115,6 +115,19 @@ void test_virtualaddr_extract() {
     printf("\nVirtual address extract_from function works.\n");
 }
 
+void test_virtual_address_roundtrip() {
+    virtual_addr_t v;
+    
+    // Test 1:
+    void *va = (void *) 963341891;
+    extract_from((unsigned long) va, &v);
+
+    printf("%p\n", reconvert(&v));
+    assert(va == reconvert(&v));
+
+    printf("Roundtrip succesful\n");
+}
+
 int main() {
     set_physical_mem();
     printf("Running Tests: \n\n");
@@ -123,6 +136,7 @@ int main() {
     test_pagingScheme();
     test_is_valid_va();
     test_virtualaddr_extract();
+    test_virtual_address_roundtrip();
 }
 
 

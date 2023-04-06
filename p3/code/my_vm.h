@@ -85,6 +85,7 @@ typedef struct {
 } virtual_addr_t;
 
 void extract_from(unsigned long va, virtual_addr_t *vaddy);
+void* reconvert(virtual_addr_t *vaddy);
 bool is_valid_va(void *va);
 pte_t* fetch_frame_from(void *va);
 void* fetch_pa_from(void *va);
