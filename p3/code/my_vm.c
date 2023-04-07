@@ -1,5 +1,6 @@
 #include "my_vm.h"
 
+void *mem_start;
 paging_scheme_t *paging_scheme;
 pde_t *ptbr; /* Page table base register - root page dir address. */
 List *tlb_cache;
@@ -243,7 +244,12 @@ int page_map(pde_t *pgdir, void *va, void *pa) {
 void *get_next_avail(int num_pages) {
     //Use virtual address bitmap to find the next free page
     unsigned long page = first_available_frame();
-    return page == -1 ? NULL : (void *) page;
+    if (page == -1) {
+        return NULL;
+    } else {
+        unsigned long page_offset = PGSIZE * page + (unsigned long) mem_start;
+        return (void *) page_offset;
+    }
 }
 
 
@@ -426,7 +432,7 @@ unsigned long first_available_frame() {
         if (position != -1) {
             // Set the bit to indicate that frame will be in use.
             frame_bitmap[i] |= (1 << (7 - position));
-            return (i * 8 + (unsigned long) position);
+            return (i * 8 + position);
         }
     }
     
