@@ -403,6 +403,20 @@ void unset_bit_for_frame(char *bitmap, unsigned long frame_number) {
     bitmap[dividend] &= ~(1 << (7 - remainder));
 }
 
+bool n_frames_available(unsigned long n) {
+    for(unsigned long i = 0; i < (1 << (short) paging_scheme->chars_for_frame_bitmap); ++i) {
+        for(short pos = 0; pos <= 7; ++pos) {
+            // If a bit is unset, then decrement n. 
+            n = (frame_bitmap[i] & (1 << pos)) ? n : n - 1;
+            if (n == 0) {
+                return true;
+            }
+        }
+    }
+
+    return false;    
+}
+
 /* 1 if success and candidate populated, 0 if failed and candidate not found.*/
 int first_available_frame(virtual_addr_t *candidate) {
     unsigned long i, position;

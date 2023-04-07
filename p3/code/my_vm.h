@@ -93,6 +93,7 @@ void* fetch_pa_from(void *va);
 unsigned long lowest_unset_bit(char c);
 void set_bit_for_frame(char *bitmap, unsigned long frame_number);
 void unset_bit_for_frame(char *bitmap, unsigned long frame_number);
+bool n_bits_available(unsigned long n);
 int first_available_frame(virtual_addr_t *candidate);
 
 void clean_my_vm(void);
