@@ -242,9 +242,8 @@ int page_map(pde_t *pgdir, void *va, void *pa) {
 /* Function that gets the next available page */
 void *get_next_avail(int num_pages) {
     //Use virtual address bitmap to find the next free page
-    virtual_addr_t next_available_page;
-    int success = first_available_frame(&next_available_page);
-    return success ? reconvert(&next_available_page) : NULL;
+    unsigned long page = first_available_frame();
+    return page == -1 ? NULL : (void *) page;
 }
 
 
@@ -417,8 +416,8 @@ bool n_frames_available(unsigned long n) {
     return false;    
 }
 
-/* 1 if success and candidate populated, 0 if failed and candidate not found.*/
-int first_available_frame(virtual_addr_t *candidate) {
+/* Returns -1 if no frame available. */
+unsigned long first_available_frame() {
     unsigned long i, position;
     unsigned long num_chars = (1 << paging_scheme->chars_for_frame_bitmap);
 
@@ -427,15 +426,11 @@ int first_available_frame(virtual_addr_t *candidate) {
         if (position != -1) {
             // Set the bit to indicate that frame will be in use.
             frame_bitmap[i] |= (1 << (7 - position));
-
-            unsigned long frame_number = (i * 8 + (unsigned long) position);
-            extract_from(frame_number << paging_scheme->offset, candidate);
-            
-            return 1;
+            return (i * 8 + (unsigned long) position);
         }
     }
     
-    return 0;
+    return -1;
 }
 
 
