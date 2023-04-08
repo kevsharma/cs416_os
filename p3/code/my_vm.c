@@ -37,6 +37,10 @@ void init_page_tables() {
     assert(num_bits_set(frame_bitmap) == (unsigned long) (1 + (1 << paging_scheme->page_dir)));
     assert(n_bits_available(frame_bitmap, 
         (1 << paging_scheme->chars_for_bitmap) - 1 - (1 << paging_scheme->page_dir)));
+    
+    // Mark first virtual page as used because t_malloc method contract is incorrect.
+    set_bit_at(virtual_bitmap, 0);
+    assert(num_bits_set(virtual_bitmap) == 1);
 }
 
 /*
@@ -303,19 +307,25 @@ void *get_next_avail(int num_pages) {
 
 
 /* Function responsible for allocating pages and used by the benchmark */
-void *t_malloc(unsigned int num_bytes) {
-    // Init supporting structs if called for the first time:
-    if (!paging_scheme) {
-        set_physical_mem();
-    }
-
    /* 
     * HINT: Next, using get_next_avail(), check if there are free pages. If
     * free pages are available, set the bitmaps and map a new page. Note, you will 
     * have to mark which physical pages are used. 
     */
+void *t_malloc(unsigned int num_bytes) {
+    // Init supporting structs if called for the first time:
+    if (!paging_scheme) {
+        set_physical_mem();
+    }
+  
+    unsigned long num_frames_requested = num_bytes / PGSIZE;
 
-    return NULL;
+    if (!n_bits_available(virtual_bitmap, num_frames_requested) || 
+    !n_bits_available(frame_bitmap, num_frames_requested)) {
+        return NULL;
+    }
+
+
 }
 
 /* Responsible for releasing one or more memory pages using virtual address (va) */
