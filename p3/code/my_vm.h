@@ -40,6 +40,7 @@ typedef struct List {
     struct tlb_store *front;
 } List;
 
+void print_TLB_missrate();
 pte_t* check_TLB(void *va);
 void add_to_TLB(void *va, pte_t *frame);
 
@@ -54,7 +55,8 @@ void get_value(void *va, void *val, int size);
 
 void mat_mult(void *mat1, void *mat2, int size, void *answer);
 
-void print_TLB_missrate();
+void clean_my_vm(void);
+
 
 /* The number of bits needed to encode some data. */
 typedef short num_bits_t;
@@ -70,7 +72,7 @@ typedef struct {
     num_bits_t page_table;          // log_2 (PGSIZE / sizeof(pte_t))
     num_bits_t page_dir;            // max_pages - page_table
     
-    num_bits_t chars_for_frame_bitmap;    // max_pages - 3 {2^3 per char}
+    num_bits_t chars_for_bitmap;    // max_pages - 3 {2^3 per char}
 } paging_scheme_t;
 
 num_bits_t num_bits_needed_to_encode(unsigned long val);
@@ -90,12 +92,14 @@ bool is_valid_va(void *va);
 pte_t* fetch_frame_from(void *va);
 void* fetch_pa_from(void *va);
 
-unsigned long lowest_unset_bit(char c);
-void set_bit_for_frame(char *bitmap, unsigned long frame_number);
-void unset_bit_for_frame(char *bitmap, unsigned long frame_number);
-bool n_bits_available(unsigned long n);
-unsigned long first_available_frame();
 
-void clean_my_vm(void);
+typedef unsigned long position;
+
+void set_bit_at(char *bitmap, position p);
+void unset_bit_at(char *bitmap, position p);
+position lowest_unset_bit(char c);
+position first_available_position(char *bitmap);
+bool n_bits_available(char *bitmap, unsigned long n);
+unsigned long num_bits_set(char *bitmap);
 
 #endif

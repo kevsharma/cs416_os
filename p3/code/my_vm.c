@@ -1,19 +1,43 @@
 #include "my_vm.h"
 
-void *mem_start;
-paging_scheme_t *paging_scheme;
-pde_t *ptbr; /* Page table base register - root page dir address. */
-List *tlb_cache;
-char *frame_bitmap; // Orientation: Left to Right, /* Set third bit = 0010 */
+//////////////////////////////////////////////////////////////////////////
 
-void init_page_tables() {
-    
-    assert(!ptbr);
-    size_t pgdir_size = (1 << (short) paging_scheme->page_dir) * sizeof(pde_t *);
-    ptbr = (pde_t *) malloc(pgdir_size);
-    memset(ptbr, 0, pgdir_size);
+paging_scheme_t *paging_scheme;
+
+void *vm_start;
+pde_t *ptbr; /* Page table base register - root page dir address. */
+
+// Orientation: Left to Right, /* Set third bit = 0010 */
+char *virtual_bitmap;
+char *frame_bitmap; 
+
+List *tlb_cache;
+
+//////////////////////////////////////////////////////////////////////////
+
+void* pointer_to_frame_at_position(position f) {
+    return (void *) (f * PGSIZE + vm_start);
 }
 
+void init_page_tables() {    
+    assert(!ptbr);
+    // allocate page dir
+    position pgdir_frame = first_available_position(frame_bitmap);
+    set_bit_at(frame_bitmap, pgdir_frame);
+    ptbr = (pde_t *) pointer_to_frame_at_position(pgdir_frame);
+
+    // allocate page tables 
+    for(unsigned long pt = 0; pt < (1 << paging_scheme->page_dir); ++pt) {
+        position ptable_frame = first_available_position(frame_bitmap);
+        set_bit_at(frame_bitmap, ptable_frame);
+        ptbr[pt] = (pde_t) pointer_to_frame_at_position(pgdir_frame);
+    }
+
+    // Note that now we have 1 + 1 << pgdir_bits # of set bits in the frame bitmap. Check invariants:
+    assert(num_bits_set(frame_bitmap) == (unsigned long) (1 + (1 << paging_scheme->page_dir)));
+    assert(n_bits_available(frame_bitmap, 
+        (1 << paging_scheme->chars_for_bitmap) - 1 - (1 << paging_scheme->page_dir)));
+}
 
 /*
 Function responsible for allocating and setting your physical memory 
@@ -31,21 +55,29 @@ void set_physical_mem() {
     init_paging_scheme(paging_scheme);
 
     assert(!frame_bitmap);
-    size_t fb_size = (1 << (short) paging_scheme->chars_for_frame_bitmap) * sizeof(char);
-    frame_bitmap = (char *) malloc(fb_size);
-    memset(frame_bitmap, 0, fb_size);
-
-    init_page_tables();
+    assert(!virtual_bitmap);
+    size_t bitmap_size = (1 << (short) paging_scheme->chars_for_bitmap) * sizeof(char);
+    frame_bitmap = (char *) malloc(bitmap_size);
+    memset(frame_bitmap, 0, bitmap_size);
+    virtual_bitmap = (char *) malloc(bitmap_size);
+    memset(virtual_bitmap, 0, bitmap_size);
 
     assert(!tlb_cache);
     tlb_cache = (List *) malloc(sizeof(List));
     tlb_cache->size = 0;
     tlb_cache->front = NULL;
 
+    // Allocate pgdir and remaining page tables:
+    vm_start = malloc(MEMSIZE);
+    memset(vm_start, 0, MEMSIZE);
+
+    init_page_tables();
+
     // Register clean up function. 
     atexit(clean_my_vm);
 }
 
+///////////////////////////////////////////////////////////////////////////////////
 
 /* Returns 1 if va1 and va2 point to the same frame, 0 otherwise.*/
 int equivalent_virtual_address(void *va1, void *va2) {
@@ -128,7 +160,6 @@ void add_to_TLB(void *va, pte_t *frame) {
     tlb_cache->size += 1;
 }
 
-
 /* Part 2: Check TLB for a valid translation. Returns the physical page address. */
 pte_t* check_TLB(void *va) {
     if (!is_valid_va(va)) {
@@ -154,7 +185,6 @@ pte_t* check_TLB(void *va) {
     }
 }
 
-
 /*
  * Part 2: Print TLB miss rate.
  * Feel free to extend the function arguments or return type.
@@ -169,6 +199,10 @@ void print_TLB_missrate() {
 
     fprintf(stderr, "TLB miss rate %lf \n", miss_rate);
 }
+
+
+///////////////////////////////////////////////////////////////////////////////////
+
 
 /* Extract offsets from va. This function assumes:
  * - 32 bit virtual address space;
@@ -221,6 +255,9 @@ void* fetch_pa_from(void *va) {
 }
 
 
+///////////////////////////////////////////////////////////////////////////////////
+
+
 /*
 The function takes a virtual address and page directories starting address and
 performs translation to return the physical address. Returns NULL if va is an invalid virtual address.
@@ -245,17 +282,15 @@ int page_map(pde_t *pgdir, void *va, void *pa) {
 }
 
 
-
-/* Function that gets the next available page */
+/* Function that gets the next available page within which you can store a frame pointer. */
 void *get_next_avail(int num_pages) {
     //Use virtual address bitmap to find the next free page
-    unsigned long page = first_available_frame();
-    if (page == -1) {
-        return NULL;
-    } else {
-        unsigned long page_offset = PGSIZE * page + (unsigned long) mem_start;
-        return (void *) page_offset;
-    }
+    position vp_position = first_available_position(virtual_bitmap);
+    set_bit_at(virtual_bitmap, vp_position);
+
+    // Return a void * to the cell in our page table within which we 
+    // may store a reference to a frame. Shift left by offset for proper va parsing.
+    return (void *) ((unsigned long) vp_position << paging_scheme->offset);
 }
 
 
@@ -317,6 +352,138 @@ void get_value(void *va, void *val, int size) {
 }
 
 
+///////////////////////////////////////////////////////////////////////////////////
+
+
+num_bits_t num_bits_needed_to_encode(unsigned long val) {
+    num_bits_t n;
+    for (n = 0; val; val >>= 1, ++n);
+    return n - 1;
+}
+
+void init_paging_scheme(paging_scheme_t *ps) {
+    ps->va_space = 32;
+    ps->pa_space = num_bits_needed_to_encode(MEMSIZE);
+    ps->max_bits = ps->pa_space < ps->va_space ? ps->pa_space : ps->va_space;
+    
+    ps->offset = num_bits_needed_to_encode(PGSIZE);
+    ps->max_pages = ps->max_bits - ps->offset;
+
+    ps->page_table = num_bits_needed_to_encode(PGSIZE / sizeof(pte_t));
+    ps->page_dir = ps->max_pages - ps->page_table;
+    
+    ps->chars_for_bitmap = ps->max_pages - 3;
+
+    assert(ps->max_pages == (ps->page_dir + ps->page_table));
+    assert(ps->max_bits == (ps->max_pages + ps->offset));
+}
+
+void print_paging_scheme(paging_scheme_t *ps) {
+    printf("Please verify that the following is correct:\n");
+    printf("============================================\n");
+    printf("(*) Page Size: %d\n\n", PGSIZE);
+
+    printf("(*) Bits for Virtual Address Space: %hd\n", ps->va_space);
+    printf("(*) Bits for Physical Address Space: %hd\n\n", ps->pa_space);
+    printf("(*) Max bits for addressing: %hd\n\n", ps->max_bits);
+
+    printf("(*) Offset bits into Page: %hd\n", ps->offset);
+    printf("(*) Max # of pages: %hd\n\n", ps->max_pages);
+
+    printf("(*) Page Table # of bits: %hd\n", ps->page_table);
+    printf("(*) Page Directory # of bits: %hd\n\n", ps->page_dir);
+    
+    printf("(*) Frame bitmap # of bits: %hd\n", ps->chars_for_bitmap);
+    printf("============================================\n");
+}
+
+
+///////////////////////////////////////////////////////////////////////////////////
+
+
+void set_bit_at(char *bitmap, position p) { 
+    unsigned long dividend = p / 8;
+    unsigned long remainder = p % 8;
+    bitmap[dividend] |= (1 << (7 - remainder));
+}
+
+void unset_bit_at(char *bitmap, position p) {
+    unsigned long dividend = p / 8;
+    unsigned long remainder = p % 8;
+    bitmap[dividend] &= ~(1 << (7 - remainder));
+}
+
+/* Returns position of first unset bit in a character OR -1 if all bits set.*/
+position lowest_unset_bit(char c) {
+    position pos = 0;
+    for(pos = 0; pos <= 7; ++pos) {
+        if (!(c & (1 << pos))) {
+            return 7 - pos;
+        }
+    }
+
+    return -1;
+}
+
+/* Returns the position of the first available bit else returns -1 if no available bits.*/
+position first_available_position(char *bitmap) {
+    for (unsigned long i = 0; i < (1 << paging_scheme->chars_for_bitmap); ++i) {
+        position p = lowest_unset_bit(bitmap[i]);
+        if (p != -1) {
+            return (i * 8 + p);
+        }
+    }
+    
+    return -1;
+}
+
+/* Returns true if at least n bits unset, false otherwise. */
+bool n_bits_available(char *bitmap, unsigned long n) {
+    assert(n > 0);
+
+    for(position i = 0; i < (1 << (short) paging_scheme->chars_for_bitmap); ++i) {
+        for(position pos = 0; pos <= 7; ++pos) {
+            // If a bit is unset, then decrement n. 
+            n = (bitmap[i] & (1 << pos)) ? n : n - 1;
+            if (n == 0) {
+                return true;
+            }
+        }
+    }
+
+    return false;    
+}
+
+unsigned long num_bits_set(char *bitmap) {
+    unsigned int count = 0;
+    for(position i = 0; i < (1 << (short) paging_scheme->chars_for_bitmap); ++i) {
+        for(position pos = 0; pos <= 7; ++pos) {
+            count = (bitmap[i] & (1 << pos)) ? count + 1 : count;
+        }
+    }
+
+    return count;
+}
+
+///////////////////////////////////////////////////////////////////////////////////
+
+
+/* Registered with atexit during vm setup. */
+void clean_my_vm(void) {
+    free(paging_scheme);
+    free(frame_bitmap);
+
+    while (tlb_cache->size) {
+        tlb_store *front = tlb_cache->front;
+        tlb_cache->front = front->next;
+        tlb_cache->size -= 1;
+        free(front);
+    }
+
+    free(tlb_cache);
+    free(vm_start);
+}
+
 
 /*
 This function receives two matrices mat1 and mat2 as an argument with size
@@ -350,114 +517,4 @@ void mat_mult(void *mat1, void *mat2, int size, void *answer) {
             put_value((void *)address_c, (void *)&c, sizeof(int));
         }
     }
-}
-
-
-num_bits_t num_bits_needed_to_encode(unsigned long val) {
-    num_bits_t n;
-    for (n = 0; val; val >>= 1, ++n);
-    return n - 1;
-}
-
-void init_paging_scheme(paging_scheme_t *ps) {
-    ps->va_space = 32;
-    ps->pa_space = num_bits_needed_to_encode(MEMSIZE);
-    ps->max_bits = ps->pa_space < ps->va_space ? ps->pa_space : ps->va_space;
-    
-    ps->offset = num_bits_needed_to_encode(PGSIZE);
-    ps->max_pages = ps->max_bits - ps->offset;
-
-    ps->page_table = num_bits_needed_to_encode(PGSIZE / sizeof(pte_t));
-    ps->page_dir = ps->max_pages - ps->page_table;
-    
-    ps->chars_for_frame_bitmap = ps->max_pages - 3;
-
-    assert(ps->max_pages == (ps->page_dir + ps->page_table));
-    assert(ps->max_bits == (ps->max_pages + ps->offset));
-}
-
-void print_paging_scheme(paging_scheme_t *ps) {
-    printf("Please verify that the following is correct:\n");
-    printf("============================================\n");
-    printf("(*) Page Size: %d\n\n", PGSIZE);
-
-    printf("(*) Bits for Virtual Address Space: %hd\n", ps->va_space);
-    printf("(*) Bits for Physical Address Space: %hd\n\n", ps->pa_space);
-    printf("(*) Max bits for addressing: %hd\n\n", ps->max_bits);
-
-    printf("(*) Offset bits into Page: %hd\n", ps->offset);
-    printf("(*) Max # of pages: %hd\n\n", ps->max_pages);
-
-    printf("(*) Page Table # of bits: %hd\n", ps->page_table);
-    printf("(*) Page Directory # of bits: %hd\n\n", ps->page_dir);
-    
-    printf("(*) Frame bitmap # of bits: %hd\n", ps->chars_for_frame_bitmap);
-    printf("============================================\n");
-}
-
-/* Returns position of first unset bit OR -1 if all bits set.*/
-unsigned long lowest_unset_bit(char c) {
-    unsigned long pos, set;
-    for(pos = 0; pos <= 7; ++pos) {
-        set = c & (1 << pos);
-        if (!set) {
-            return 7 - pos;
-        }
-    }
-
-    return -1;
-}
-
-void unset_bit_for_frame(char *bitmap, unsigned long frame_number) {
-    unsigned long dividend = frame_number / 8;
-    unsigned long remainder = frame_number % 8;
-    bitmap[dividend] &= ~(1 << (7 - remainder));
-}
-
-bool n_frames_available(unsigned long n) {
-    for(unsigned long i = 0; i < (1 << (short) paging_scheme->chars_for_frame_bitmap); ++i) {
-        for(short pos = 0; pos <= 7; ++pos) {
-            // If a bit is unset, then decrement n. 
-            n = (frame_bitmap[i] & (1 << pos)) ? n : n - 1;
-            if (n == 0) {
-                return true;
-            }
-        }
-    }
-
-    return false;    
-}
-
-/* Returns -1 if no frame available. */
-unsigned long first_available_frame() {
-    unsigned long i, position;
-    unsigned long num_chars = (1 << paging_scheme->chars_for_frame_bitmap);
-
-    for (i = 0; i < num_chars; ++i) {
-        position = lowest_unset_bit(frame_bitmap[i]);
-        if (position != -1) {
-            // Set the bit to indicate that frame will be in use.
-            frame_bitmap[i] |= (1 << (7 - position));
-            return (i * 8 + position);
-        }
-    }
-    
-    return -1;
-}
-
-
-/* Registered with atexit during vm setup. */
-void clean_my_vm(void) {
-    free(paging_scheme);
-    free(ptbr);
-    free(frame_bitmap);
-
-    while (tlb_cache->size) {
-        tlb_store *front = tlb_cache->front;
-        tlb_cache->front = front->next;
-        tlb_cache->size -= 1;
-        free(front);
-    }
-
-    free(tlb_cache);
 }
