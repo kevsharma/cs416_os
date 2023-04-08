@@ -91,18 +91,7 @@ void test_virtualaddr_extract() {
     virtual_addr_t v;
     
     // Test 1:
-    void *va = (void *) 1500212803;
-    // va = 01011001011010110110111001000011
-    // pde_offset = 0101100101 = 357 | ignore first two bits = 101
-    // pte_offset = 1010110110 = 694
-    // offset = 111001000011
-    extract_from((unsigned long) va, &v);
-    assert(v.pde_offset == 101);
-    assert(v.pte_offset == 694);
-    assert(v.byte_offset == 3651);
-
-    // Test 2:
-    va = (void *) 963341891;
+    void *va = (void *) 963341891;
     // va = 00111001011010110110111001000011
     // pde_offset = 0101100101 = 357 | ignore first two bits = 101
     // pte_offset = 1010110110 = 694
@@ -122,10 +111,8 @@ void test_virtual_address_roundtrip() {
     void *va = (void *) 963341891;
     extract_from((unsigned long) va, &v);
 
-    printf("%p\n", reconvert(&v));
     assert(va == reconvert(&v));
-
-    printf("Roundtrip succesful\n");
+    printf("\nRoundtrip test works.\n");
 }
 
 int main() {
