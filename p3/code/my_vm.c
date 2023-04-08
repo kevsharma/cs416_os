@@ -288,8 +288,7 @@ int page_map(pde_t *pgdir, void *va, void *pa) {
         return 0; // Fail
     }
 
-    pte_t *addr_of_cell_containing_frame = fetch_pte_from(va);
-    *addr_of_cell_containing_frame = (pte_t) pa;
+    *(fetch_pte_from(va)) = (pte_t) pa;
     return 1; // Success
 }
 
@@ -325,7 +324,7 @@ void *t_malloc(unsigned int num_bytes) {
         return NULL;
     }
 
-
+    
 }
 
 /* Responsible for releasing one or more memory pages using virtual address (va) */
