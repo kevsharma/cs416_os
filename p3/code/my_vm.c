@@ -6,6 +6,15 @@ pde_t *ptbr; /* Page table base register - root page dir address. */
 List *tlb_cache;
 char *frame_bitmap; // Orientation: Left to Right, /* Set third bit = 0010 */
 
+void init_page_tables() {
+    
+    assert(!ptbr);
+    size_t pgdir_size = (1 << (short) paging_scheme->page_dir) * sizeof(pde_t *);
+    ptbr = (pde_t *) malloc(pgdir_size);
+    memset(ptbr, 0, pgdir_size);
+}
+
+
 /*
 Function responsible for allocating and setting your physical memory 
 */
@@ -21,15 +30,12 @@ void set_physical_mem() {
     paging_scheme = (paging_scheme_t *) malloc(sizeof(paging_scheme_t));
     init_paging_scheme(paging_scheme);
 
-    assert(!ptbr);
-    size_t pgdir_size = (1 << (short) paging_scheme->page_dir) * sizeof(pde_t *);
-    ptbr = (pde_t *) malloc(pgdir_size);
-    memset(ptbr, 0, pgdir_size);
-    
     assert(!frame_bitmap);
     size_t fb_size = (1 << (short) paging_scheme->chars_for_frame_bitmap) * sizeof(char);
     frame_bitmap = (char *) malloc(fb_size);
     memset(frame_bitmap, 0, fb_size);
+
+    init_page_tables();
 
     assert(!tlb_cache);
     tlb_cache = (List *) malloc(sizeof(List));
