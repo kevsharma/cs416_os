@@ -89,12 +89,13 @@ typedef struct {
 void extract_from(unsigned long va, virtual_addr_t *vaddy);
 void* reconvert(virtual_addr_t *vaddy);
 bool is_valid_va(void *va);
-pte_t* fetch_frame_from(void *va);
+pte_t* fetch_pte_from(void *va);
 void* fetch_pa_from(void *va);
 
 
 typedef unsigned long position;
 
+bool bit_set_at(char *bitmap, position p);
 void set_bit_at(char *bitmap, position p);
 void unset_bit_at(char *bitmap, position p);
 position lowest_unset_bit(char c);

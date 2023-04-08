@@ -175,7 +175,7 @@ pte_t* check_TLB(void *va) {
         return target_tlb->frame;
     } else {
         // No such translation in Cache. Add to valid but uncached va.
-        pte_t *target_frame = fetch_frame_from(va);
+        pte_t *target_frame = fetch_pte_from(va);
         if (target_frame) {
             add_to_TLB(va, target_frame);
             return target_frame;
@@ -232,7 +232,7 @@ bool is_valid_va(void *va) {
 
 // To-DO ---> Test THIS (maybe after doing malloc/free).
 /* If va is invalid, returns NULL. */
-pte_t* fetch_frame_from(void *va) {
+pte_t* fetch_pte_from(void *va) {
     if (!is_valid_va(va)) {
         return NULL;
     }
@@ -244,7 +244,7 @@ pte_t* fetch_frame_from(void *va) {
 }
 
 void* fetch_pa_from(void *va) {
-    pte_t *frame = fetch_frame_from(va);
+    pte_t *frame = fetch_pte_from(va);
     if(frame == NULL) {
         return NULL;
     }
@@ -271,14 +271,22 @@ pte_t *translate(pde_t *pgdir, void *va) {
 The function takes a page directory address, virtual address, physical address
 as an argument, and sets a page table entry. This function will walk the page
 directory to see if there is an existing mapping for a virtual address. If the
-virtual address is not present, then a new entry will be added
+virtual address is not present, then a new entry will be added.
+
+0 if failed, 1 if success.
 */
 int page_map(pde_t *pgdir, void *va, void *pa) {
     /*HINT: Similar to translate(), find the page directory (1st level)
     and page table (2nd-level) indices. If no mapping exists, set the
     virtual to physical mapping */
+    position va_pos = ((unsigned long) va) >> paging_scheme->offset;
+    if (!is_valid_va(va) || bit_set_at(virtual_bitmap, va_pos)) {
+        return 0; // Fail
+    }
 
-    return -1;
+    pte_t *addr_of_cell_containing_frame = fetch_pte_from(va);
+    *addr_of_cell_containing_frame = (pte_t) pa;
+    return 1; // Success
 }
 
 
@@ -400,6 +408,11 @@ void print_paging_scheme(paging_scheme_t *ps) {
 
 ///////////////////////////////////////////////////////////////////////////////////
 
+bool bit_set_at(char *bitmap, position p) {
+    unsigned long dividend = p / 8;
+    unsigned long remainder = p % 8;
+    return bitmap[dividend] & (1 << (7 - remainder));
+}
 
 void set_bit_at(char *bitmap, position p) { 
     unsigned long dividend = p / 8;
