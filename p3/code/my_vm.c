@@ -470,7 +470,23 @@ void t_free(void *va, int size) {
     }   
 }
 
-void put_value_aux(void *start, void *val, int bytes_remaining) {
+
+/* The function copies data pointed by "val" to physical
+ * memory pages using virtual address (va)
+ * The function returns 0 if the put is successfull and -1 otherwise.
+*/
+int put_value(void *va, void *val, int size) {
+
+    /* HINT: Using the virtual address and translate(), find the physical page. Copy
+     * the contents of "val" to a physical page. NOTE: The "size" value can be larger 
+     * than one page. Therefore, you may have to find multiple pages using translate()
+     * function.
+     */
+
+
+}
+
+void get_value_aux(void *start, void *val, int bytes_remaining) {
     // Base Step: 
     if (!bytes_remaining) {
         return;
@@ -490,41 +506,22 @@ void put_value_aux(void *start, void *val, int bytes_remaining) {
     } else {
         // We will write PAYLOAD_Bytes to this val and find remaining data from next link.c
         memcpy(val, pa, PAYLOAD_BYTES);
-        put_value(new_start, val + PAYLOAD_BYTES, bytes_remaining - PAYLOAD_BYTES);
+        get_value(new_start, val + PAYLOAD_BYTES, bytes_remaining - PAYLOAD_BYTES);
     }
-}
-
-/* The function copies data pointed by "val" to physical
- * memory pages using virtual address (va)
- * The function returns 0 if the put is successfull and -1 otherwise.
-*/
-int put_value(void *va, void *val, int size) {
-
-    /* HINT: Using the virtual address and translate(), find the physical page. Copy
-     * the contents of "val" to a physical page. NOTE: The "size" value can be larger 
-     * than one page. Therefore, you may have to find multiple pages using translate()
-     * function.
-     */
-
-    unsigned long num_pages_to_write_to = (size / PAYLOAD_BYTES) + 1;
-
-    if (valid_pages_linked_together_from(va, num_pages_to_write_to)) {
-        put_value_aux(va, val, size);
-        return 0;
-    }
-
-    return -1;
 }
 
 
 /*Given a virtual address, this function copies the contents of the page to val*/
 void get_value(void *va, void *val, int size) {
-
     /* HINT: put the values pointed to by "va" inside the physical memory at given
     * "val" address. Assume you can access "val" directly by derefencing them.
     */
+    unsigned long num_pages_to_write_to = (size / PAYLOAD_BYTES) + 1;
+    if (!valid_pages_linked_together_from(va, num_pages_to_write_to)) {
+        printf("DEBUG: Failed get_value verification check.\n");
+    }
 
-
+    get_value_aux(va, val, size);
 }
 
 
