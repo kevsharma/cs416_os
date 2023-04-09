@@ -275,7 +275,8 @@ The function takes a virtual address and page directories starting address and
 performs translation to return the physical address. Returns NULL if va is an invalid virtual address.
 */
 pte_t *translate(pde_t *pgdir, void *va) {
-    return check_TLB(va);
+    //return check_TLB(va);
+    return fetch_pte_from(va);
 }
 
 
@@ -296,7 +297,7 @@ int page_map(pde_t *pgdir, void *va, void *pa) {
         return 0; // Fail
     }
 
-    *(fetch_pte_from(va)) = (pte_t) pa;
+    *(translate(NULL, va)) = (pte_t) pa;
     return 1; // Success
 }
 
@@ -477,7 +478,7 @@ void put_value_aux(void *start, void *val, int bytes_remaining) {
     }
 
     // Inductive Step:
-    pte_t *pte_holding_frame = fetch_pte_from(start);
+    pte_t *pte_holding_frame = translate(NULL, start);
     void *pa = (void *) *pte_holding_frame;
     
     void *new_start = NULL;
@@ -521,7 +522,7 @@ void get_value_aux(void *start, void *val, int bytes_remaining) {
     }
 
     // Inductive Step:
-    pte_t *pte_holding_frame = fetch_pte_from(start);
+    pte_t *pte_holding_frame = translate(NULL, start);
     void *pa = (void *) *pte_holding_frame;
     
     void *new_start = NULL;
