@@ -676,8 +676,11 @@ unsigned long num_bits_set(char *bitmap) {
 
 /* Registered with atexit during vm setup. */
 void clean_my_vm(void) {
+    free(vm_start);
     free(paging_scheme);
+
     free(frame_bitmap);
+    free(virtual_bitmap);
 
     while (tlb_cache->size) {
         tlb_store *front = tlb_cache->front;
@@ -687,7 +690,6 @@ void clean_my_vm(void) {
     }
 
     free(tlb_cache);
-    free(vm_start);
 }
 
 
