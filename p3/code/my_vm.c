@@ -21,6 +21,10 @@ void* pointer_to_frame_at_position(position f) {
     return (void *) (f * PGSIZE + vm_start);
 }
 
+position frame_position_from_pointer(void *pa) {
+    return (position) (pa - vm_start) / PGSIZE;
+}
+
 void init_page_tables() {    
     assert(!ptbr);
     // allocate page dir
@@ -247,6 +251,8 @@ pte_t* fetch_pte_from(void *va) {
     extract_from((unsigned long) va, &vaddy);
     pde_t *intermediate_dir = (pde_t *) *(ptbr + vaddy.pde_offset);
     return (intermediate_dir + vaddy.pte_offset);
+    // They must dereference the pointer to get the address of the frame (pa). 
+    // This returns the location of the cell pointed to by va.
 }
 
 void* fetch_pa_from(void *va) {
@@ -257,7 +263,7 @@ void* fetch_pa_from(void *va) {
 
     virtual_addr_t vaddy;
     extract_from((unsigned long) va, &vaddy);
-    return (void *) (frame + vaddy.byte_offset);
+    return (void *) *(frame + vaddy.byte_offset);
 }
 
 
@@ -373,16 +379,90 @@ void *t_malloc(unsigned int num_bytes) {
     return first_page;
 }
 
-/* Responsible for releasing one or more memory pages using virtual address (va) */
-void t_free(void *va, int size) {
+/* Valid free only if the memory from "va" to va+size is valid. */
+bool t_free_valid_verify(void *start, unsigned long num_links) {
+    // Base step
+    if (start == NULL && num_links == 0) {
+        // start linked gracefully onwards to final page.
+        return true;
+    }
 
-    /* Part 1: Free the page table entries starting from this virtual address
-     * (va). Also mark the pages free in the bitmap. Perform free only if the 
-     * memory from "va" to va+size is valid.
-     *
-     * Part 2: Also, remove the translation from the TLB
-     */
+    if (start == NULL && num_links > 0) {
+        // No page pointed to by start and yet we still have to free a remaining page.
+        return false; // invalid size pointed to t_free.
+    }
+
+    // Inductive Step
+
+    // Start isn't null and num_links is > 0.
+    pte_t *pte_holding_frame = fetch_pte_from(start);
+    if (pte_holding_frame == NULL) {
+        // The cell must be valid.
+        return false;
+    }
+
+    void *pa = (void *) *pte_holding_frame;
+    if (pa == NULL) {
+        // The cell must hold a reference to a physical address.
+        return false;
+    }
     
+    // Find the link.
+    void *new_start = NULL;
+    memcpy(new_start, pa, sizeof(void *));
+
+    return t_free_valid_verify(new_start, num_links - 1);
+}
+
+void t_free_aux(void *start, unsigned long num_links) {
+    // Part 1: Base case
+    if (start == NULL || num_links == 0) {
+        return;
+    }
+
+    // Part 1: Inductive Step
+    search_and_remove(start); // Part 2: Also, remove the translation from the TLB
+
+    pte_t *pte_holding_frame = fetch_pte_from(start);
+    
+    void *pa = (void *) *pte_holding_frame;
+
+    // Mark the mapping from start virtual address to NULL, since we are freeing the frame.
+    memset(pte_holding_frame, 0, sizeof(pte_t));
+
+    // Find the link.
+    void *new_start = NULL;
+    memcpy(new_start, pa, sizeof(void *));
+    
+    unset_bit_at(virtual_bitmap, (position)(((unsigned long) start) >> paging_scheme->offset));
+    unset_bit_at(frame_bitmap, frame_position_from_pointer(pa));
+
+    // Overwrite the page with empty bits so it can be reused again.
+    memset(pa, 0, PGSIZE);
+
+    t_free_aux(new_start, num_links - 1);
+}
+
+/* Responsible for releasing one or more memory pages using virtual address (va) */
+void t_free(void *va, int size) {   
+    if (size == 0) {
+        return;
+    }
+    
+    if (!paging_scheme) {
+        set_physical_mem();
+    }
+
+    unsigned long pages_requested = (size / PGSIZE) + 1;
+    if (t_free_valid_verify(va, pages_requested)) {
+        /* Part 1: Free the page table entries starting from this virtual address
+         * (va). Also mark the pages free in the bitmap. Perform free only if the 
+         * memory from "va" to va+size is valid.
+         *
+         * Part 2: Also, remove the translation from the TLB
+         */
+        t_free_aux(va, pages_requested);
+    }   
 }
 
 
