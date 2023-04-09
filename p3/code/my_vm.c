@@ -329,7 +329,7 @@ void *t_malloc(unsigned int num_bytes) {
         return NULL;
     }
 
-    unsigned long pages_requested = (num_bytes / PGSIZE) + 1;
+    unsigned long pages_requested = (num_bytes / PAYLOAD_BYTES) + ((num_bytes % PAYLOAD_BYTES) != 0);
 
     if (!n_bits_available(virtual_bitmap, pages_requested) || 
     !n_bits_available(frame_bitmap, pages_requested)) {
@@ -382,7 +382,7 @@ void *t_malloc(unsigned int num_bytes) {
 /* Valid free only if the memory from "va" to va+size is valid. */
 bool valid_pages_linked_together_from(void *start, unsigned long num_links) {
     // Base step
-    if (start == NULL && num_links == 0) {
+    if (num_links == 0) {
         // start linked gracefully onwards to final page.
         return true;
     }
@@ -458,7 +458,7 @@ void t_free(void *va, int size) {
         set_physical_mem();
     }
 
-    unsigned long pages_requested = (size / PGSIZE) + 1;
+    unsigned long pages_requested = (size / PAYLOAD_BYTES) + ((size % PAYLOAD_BYTES) != 0);
     if (valid_pages_linked_together_from(va, pages_requested)) {
         /* Part 1: Free the page table entries starting from this virtual address
          * (va). Also mark the pages free in the bitmap. Perform free only if the 
@@ -504,7 +504,7 @@ int put_value(void *va, void *val, int size) {
      * than one page. Therefore, you may have to find multiple pages using translate()
      * function.
      */
-    unsigned long num_pages_to_write_to = (size / PAYLOAD_BYTES) + 1;
+    unsigned long num_pages_to_write_to = (size / PAYLOAD_BYTES) + ((size % PAYLOAD_BYTES) != 0);
     if (!valid_pages_linked_together_from(va, num_pages_to_write_to)) {
         printf("DEBUG: Not enough pages to accomodate put_value request.\n");
         return -1;
@@ -544,7 +544,7 @@ void get_value(void *va, void *val, int size) {
     /* HINT: put the values pointed to by "va" inside the physical memory at given
     * "val" address. Assume you can access "val" directly by derefencing them.
     */
-    unsigned long num_pages_to_write_to = (size / PAYLOAD_BYTES) + 1;
+    unsigned long num_pages_to_write_to = (size / PAYLOAD_BYTES) + ((size % PAYLOAD_BYTES) != 0);
     if (!valid_pages_linked_together_from(va, num_pages_to_write_to)) {
         printf("DEBUG: Failed get_value verification check.\n");
     }
