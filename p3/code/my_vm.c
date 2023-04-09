@@ -5,7 +5,9 @@
 paging_scheme_t *paging_scheme;
 
 void *vm_start;
+
 pde_t *ptbr; /* Page table base register - root page dir address. */
+size_t PAYLOAD_BYTES = PGSIZE - sizeof(void *);
 
 // Orientation: Left to Right, /* Set third bit = 0010 */
 char *virtual_bitmap;
@@ -317,14 +319,58 @@ void *t_malloc(unsigned int num_bytes) {
         set_physical_mem();
     }
   
-    unsigned long num_frames_requested = num_bytes / PGSIZE;
-
-    if (!n_bits_available(virtual_bitmap, num_frames_requested) || 
-    !n_bits_available(frame_bitmap, num_frames_requested)) {
+    if (num_bytes == 0) {
         return NULL;
     }
 
-    
+    unsigned long pages_requested = (num_bytes / PGSIZE) + 1;
+
+    if (!n_bits_available(virtual_bitmap, pages_requested) || 
+    !n_bits_available(frame_bitmap, pages_requested)) {
+        return NULL;
+    }
+
+    /* The Virtual address of the first page (to be returned)*/
+    void *first_page = NULL;
+    void **requested_frames = (void *) malloc(pages_requested * sizeof(void *));
+
+    /* The links from one page to another. This is a Virtual address reference stored in the first 4 bytes
+     * of a frame to document the on which virtual address the frame's payload continues.
+     */
+    void **links = (void *) malloc(pages_requested * sizeof(void *));
+    memset(links, 0, pages_requested * sizeof(void *));
+
+
+    for (unsigned long i = 0; i < pages_requested; ++i) {
+        // Get the virtual address to store one of the frames in.
+        void *va = get_next_avail(0);
+        links[i] = va;
+        first_page = first_page == NULL ? va : first_page;
+
+        // Get the physical address of the frame.
+        position frame_obtained = first_available_position(frame_bitmap);
+        set_bit_at(frame_bitmap, frame_obtained);
+        void *pa = pointer_to_frame_at_position(frame_obtained);
+        requested_frames[i] = pa;
+        memset(pa, 0, PGSIZE);
+
+        int mapped_successfully = page_map(ptbr, va, pa);
+        assert(mapped_successfully);
+    }
+
+    // Say we allocated frames A, B, C for a request of 10,000 bytes with a 4096 page size.
+    // Copy &B into first four bytes of A; 
+    // Copy &C into first four bytes of B;
+    // Copy NULL into first four bytes of C (done previously using memset(pa, 0, PGSIZE))
+    // Algorithm for such linking using data we kept track of previously: 
+    for (unsigned long i = 0; i < (pages_requested - 1); ++i) {
+        memcpy(requested_frames[i], links[i+1], sizeof(void *));
+    }
+
+    free(requested_frames);
+    free(links);
+
+    return first_page;
 }
 
 /* Responsible for releasing one or more memory pages using virtual address (va) */
