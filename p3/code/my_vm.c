@@ -470,6 +470,28 @@ void t_free(void *va, int size) {
     }   
 }
 
+void put_value_aux(void *start, void *val, int bytes_remaining) {
+    // Base Step: 
+    if (!bytes_remaining) {
+        return;
+    }
+
+    // Inductive Step:
+    pte_t *pte_holding_frame = fetch_pte_from(start);
+    void *pa = (void *) *pte_holding_frame;
+    
+    void *new_start = NULL;
+    memcpy(new_start, pa, sizeof(void *));
+
+    pa += sizeof(void *); //  Point to payload not the first 4 bytes reserved for link.
+
+    if (bytes_remaining <= PAYLOAD_BYTES) {
+        memcpy(pa, val, bytes_remaining);
+    } else {
+        memcpy(pa, val, PAYLOAD_BYTES);
+        put_value_aux(new_start, val + PAYLOAD_BYTES, bytes_remaining - PAYLOAD_BYTES);
+    }
+}
 
 /* The function copies data pointed by "val" to physical
  * memory pages using virtual address (va)
@@ -482,8 +504,14 @@ int put_value(void *va, void *val, int size) {
      * than one page. Therefore, you may have to find multiple pages using translate()
      * function.
      */
+    unsigned long num_pages_to_write_to = (size / PAYLOAD_BYTES) + 1;
+    if (!valid_pages_linked_together_from(va, num_pages_to_write_to)) {
+        printf("DEBUG: Not enough pages to accomodate put_value request.\n");
+        return -1;
+    }
 
-
+    put_value_aux(va, val, size);
+    return 0;
 }
 
 void get_value_aux(void *start, void *val, int bytes_remaining) {
