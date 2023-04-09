@@ -380,7 +380,7 @@ void *t_malloc(unsigned int num_bytes) {
 }
 
 /* Valid free only if the memory from "va" to va+size is valid. */
-bool t_free_valid_verify(void *start, unsigned long num_links) {
+bool valid_pages_linked_together_from(void *start, unsigned long num_links) {
     // Base step
     if (start == NULL && num_links == 0) {
         // start linked gracefully onwards to final page.
@@ -393,6 +393,11 @@ bool t_free_valid_verify(void *start, unsigned long num_links) {
     }
 
     // Inductive Step
+    position va_pos = ((unsigned long) start) >> paging_scheme->offset;
+    if (!is_valid_va(start) || bit_set_at(virtual_bitmap, va_pos)) {
+        // This virtual page is not in use. Reject!
+        return false;
+    }
 
     // Start isn't null and num_links is > 0.
     pte_t *pte_holding_frame = fetch_pte_from(start);
@@ -411,7 +416,7 @@ bool t_free_valid_verify(void *start, unsigned long num_links) {
     void *new_start = NULL;
     memcpy(new_start, pa, sizeof(void *));
 
-    return t_free_valid_verify(new_start, num_links - 1);
+    return valid_pages_linked_together_from(new_start, num_links - 1);
 }
 
 void t_free_aux(void *start, unsigned long num_links) {
@@ -454,7 +459,7 @@ void t_free(void *va, int size) {
     }
 
     unsigned long pages_requested = (size / PGSIZE) + 1;
-    if (t_free_valid_verify(va, pages_requested)) {
+    if (valid_pages_linked_together_from(va, pages_requested)) {
         /* Part 1: Free the page table entries starting from this virtual address
          * (va). Also mark the pages free in the bitmap. Perform free only if the 
          * memory from "va" to va+size is valid.
@@ -465,6 +470,29 @@ void t_free(void *va, int size) {
     }   
 }
 
+void put_value_aux(void *start, void *val, int bytes_remaining) {
+    // Base Step: 
+    if (!bytes_remaining) {
+        return;
+    }
+
+    // Inductive Step:
+    pte_t *pte_holding_frame = fetch_pte_from(start);
+    void *pa = (void *) *pte_holding_frame;
+    
+    void *new_start = NULL;
+    memcpy(new_start, pa, sizeof(void *));
+
+    pa += sizeof(void *); // Ignore the first bytes reserved for link pointer.
+
+    if (bytes_remaining <= PAYLOAD_BYTES) {
+        memcpy(val, pa, bytes_remaining);
+    } else {
+        // We will write PAYLOAD_Bytes to this val and find remaining data from next link.c
+        memcpy(val, pa, PAYLOAD_BYTES);
+        put_value(new_start, val + PAYLOAD_BYTES, bytes_remaining - PAYLOAD_BYTES);
+    }
+}
 
 /* The function copies data pointed by "val" to physical
  * memory pages using virtual address (va)
@@ -478,9 +506,14 @@ int put_value(void *va, void *val, int size) {
      * function.
      */
 
+    unsigned long num_pages_to_write_to = (size / PAYLOAD_BYTES) + 1;
 
-    /*return -1 if put_value failed and 0 if put is successfull*/
+    if (valid_pages_linked_together_from(va, num_pages_to_write_to)) {
+        put_value_aux(va, val, size);
+        return 0;
+    }
 
+    return -1;
 }
 
 
