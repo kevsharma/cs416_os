@@ -115,6 +115,18 @@ void test_virtual_address_roundtrip() {
     printf("\nRoundtrip test works.\n");
 }
 
+void test_simple_malloc_put_free() {
+    void *a = t_malloc(sizeof(int));
+
+    int x = 4;
+    int ret = put_value(a, &x, sizeof(int));
+    assert(ret == 0); // success;
+
+    t_free(a, sizeof(int));
+
+    assert(x == 4);
+}
+
 int main() {
     set_physical_mem();
     printf("Running Tests: \n\n");
@@ -124,6 +136,7 @@ int main() {
     test_is_valid_va();
     test_virtualaddr_extract();
     test_virtual_address_roundtrip();
+    test_simple_malloc_put_free();
 }
 
 

@@ -363,6 +363,9 @@ void *t_malloc(unsigned int num_bytes) {
 
         int mapped_successfully = page_map(ptbr, va, pa);
         assert(mapped_successfully);
+        
+        assert(bit_set_at(virtual_bitmap, (unsigned long) va >> paging_scheme->offset));
+        assert(bit_set_at(frame_bitmap, frame_obtained));
     }
 
     // Say we allocated frames A, B, C for a request of 10,000 bytes with a 4096 page size.
