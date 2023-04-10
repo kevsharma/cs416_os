@@ -395,7 +395,7 @@ bool valid_pages_linked_together_from(void *start, unsigned long num_links) {
 
     // Inductive Step
     position va_pos = ((unsigned long) start) >> paging_scheme->offset;
-    if (!is_valid_va(start) || bit_set_at(virtual_bitmap, va_pos)) {
+    if (!is_valid_va(start) || !bit_set_at(virtual_bitmap, va_pos)) {
         // This virtual page is not in use. Reject!
         return false;
     }
@@ -412,12 +412,12 @@ bool valid_pages_linked_together_from(void *start, unsigned long num_links) {
         // The cell must hold a reference to a physical address.
         return false;
     }
-    
-    // Find the link.
-    void *new_start = NULL;
-    memcpy(new_start, pa, sizeof(void *));
 
-    return valid_pages_linked_together_from(new_start, num_links - 1);
+    // Find the link.
+    unsigned long new_start;
+    memcpy(&new_start, pa, sizeof(void *));
+
+    return valid_pages_linked_together_from((void *) new_start, num_links - 1);
 }
 
 void t_free_aux(void *start, unsigned long num_links) {
@@ -437,8 +437,8 @@ void t_free_aux(void *start, unsigned long num_links) {
     memset(pte_holding_frame, 0, sizeof(pte_t));
 
     // Find the link.
-    void *new_start = NULL;
-    memcpy(new_start, pa, sizeof(void *));
+    unsigned long new_start;
+    memcpy(&new_start, pa, sizeof(void *));
     
     unset_bit_at(virtual_bitmap, (position)(((unsigned long) start) >> paging_scheme->offset));
     unset_bit_at(frame_bitmap, frame_position_from_pointer(pa));
@@ -446,7 +446,7 @@ void t_free_aux(void *start, unsigned long num_links) {
     // Overwrite the page with empty bits so it can be reused again.
     memset(pa, 0, PGSIZE);
 
-    t_free_aux(new_start, num_links - 1);
+    t_free_aux((void *) new_start, num_links - 1);
 }
 
 /* Responsible for releasing one or more memory pages using virtual address (va) */
@@ -481,8 +481,9 @@ void put_value_aux(void *start, void *val, int bytes_remaining) {
     pte_t *pte_holding_frame = translate(NULL, start);
     void *pa = (void *) *pte_holding_frame;
     
-    void *new_start = NULL;
-    memcpy(new_start, pa, sizeof(void *));
+    // Find the link.
+    unsigned long new_start;
+    memcpy(&new_start, pa, sizeof(void *));
 
     pa += sizeof(void *); //  Point to payload not the first 4 bytes reserved for link.
 
@@ -490,7 +491,7 @@ void put_value_aux(void *start, void *val, int bytes_remaining) {
         memcpy(pa, val, bytes_remaining);
     } else {
         memcpy(pa, val, PAYLOAD_BYTES);
-        put_value_aux(new_start, val + PAYLOAD_BYTES, bytes_remaining - PAYLOAD_BYTES);
+        put_value_aux((void *) new_start, val + PAYLOAD_BYTES, bytes_remaining - PAYLOAD_BYTES);
     }
 }
 
@@ -525,8 +526,9 @@ void get_value_aux(void *start, void *val, int bytes_remaining) {
     pte_t *pte_holding_frame = translate(NULL, start);
     void *pa = (void *) *pte_holding_frame;
     
-    void *new_start = NULL;
-    memcpy(new_start, pa, sizeof(void *));
+    // Find the link.
+    unsigned long new_start;
+    memcpy(&new_start, pa, sizeof(void *));
 
     pa += sizeof(void *); // Ignore the first bytes reserved for link pointer.
 
@@ -535,7 +537,7 @@ void get_value_aux(void *start, void *val, int bytes_remaining) {
     } else {
         // We will write PAYLOAD_Bytes to this val and find remaining data from next link.c
         memcpy(val, pa, PAYLOAD_BYTES);
-        get_value(new_start, val + PAYLOAD_BYTES, bytes_remaining - PAYLOAD_BYTES);
+        get_value((void *) new_start, val + PAYLOAD_BYTES, bytes_remaining - PAYLOAD_BYTES);
     }
 }
 
