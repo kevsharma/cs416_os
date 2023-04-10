@@ -325,7 +325,7 @@ void *t_malloc(unsigned int num_bytes) {
     if (!paging_scheme) {
         set_physical_mem();
     }
-  
+
     if (num_bytes == 0) {
         return NULL;
     }
@@ -339,31 +339,28 @@ void *t_malloc(unsigned int num_bytes) {
 
     /* The Virtual address of the first page (to be returned)*/
     void *first_page = NULL;
-    void **requested_frames = (void *) malloc(pages_requested * sizeof(void *));
+    unsigned long *requested_frames = (unsigned long *) malloc(pages_requested * sizeof(unsigned long));
 
     /* The links from one page to another. This is a Virtual address reference stored in the first 4 bytes
      * of a frame to document the on which virtual address the frame's payload continues.
      */
-    void **links = (void *) malloc(pages_requested * sizeof(void *));
-    memset(links, 0, pages_requested * sizeof(void *));
-
+    unsigned long *links = (unsigned long *) malloc(pages_requested * sizeof(unsigned long));
 
     for (unsigned long i = 0; i < pages_requested; ++i) {
         // Get the virtual address to store one of the frames in.
         void *va = get_next_avail(0);
-        links[i] = va;
+        links[i] = (unsigned long) va;
         first_page = first_page == NULL ? va : first_page;
 
         // Get the physical address of the frame.
         position frame_obtained = first_available_position(frame_bitmap);
         set_bit_at(frame_bitmap, frame_obtained);
         void *pa = pointer_to_frame_at_position(frame_obtained);
-        requested_frames[i] = pa;
+        requested_frames[i] = (unsigned long) pa;
         memset(pa, 0, PGSIZE);
 
         int mapped_successfully = page_map(ptbr, va, pa);
         assert(mapped_successfully);
-        
         assert(bit_set_at(virtual_bitmap, (unsigned long) va >> paging_scheme->offset));
         assert(bit_set_at(frame_bitmap, frame_obtained));
     }
@@ -373,8 +370,8 @@ void *t_malloc(unsigned int num_bytes) {
     // Copy &C into first four bytes of B;
     // Copy NULL into first four bytes of C (done previously using memset(pa, 0, PGSIZE))
     // Algorithm for such linking using data we kept track of previously: 
-    for (unsigned long i = 0; i < (pages_requested - 1); ++i) {
-        memcpy(requested_frames[i], links[i+1], sizeof(void *));
+    for (unsigned long j = 0; j < (pages_requested - 1); ++j) {
+        memcpy((void *) requested_frames[j], (links + j + 1), sizeof(unsigned long));
     }
 
     free(requested_frames);
@@ -629,8 +626,8 @@ void unset_bit_at(char *bitmap, position p) {
 position lowest_unset_bit(char c) {
     position pos = 0;
     for(pos = 0; pos <= 7; ++pos) {
-        if (!(c & (1 << pos))) {
-            return 7 - pos;
+        if (!(c & (1 << (7 - pos)))) {
+            return pos;
         }
     }
 
@@ -656,7 +653,7 @@ bool n_bits_available(char *bitmap, unsigned long n) {
     for(position i = 0; i < (1 << (short) paging_scheme->chars_for_bitmap); ++i) {
         for(position pos = 0; pos <= 7; ++pos) {
             // If a bit is unset, then decrement n. 
-            n = (bitmap[i] & (1 << pos)) ? n : n - 1;
+            n = (bitmap[i] & (1 << (7 - pos))) ? n : n - 1;
             if (n == 0) {
                 return true;
             }
@@ -670,7 +667,7 @@ unsigned long num_bits_set(char *bitmap) {
     unsigned int count = 0;
     for(position i = 0; i < (1 << (short) paging_scheme->chars_for_bitmap); ++i) {
         for(position pos = 0; pos <= 7; ++pos) {
-            count = (bitmap[i] & (1 << pos)) ? count + 1 : count;
+            count = (bitmap[i] & (1 << (7 - pos))) ? count + 1 : count;
         }
     }
 
