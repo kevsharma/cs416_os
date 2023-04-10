@@ -297,6 +297,7 @@ int page_map(pde_t *pgdir, void *va, void *pa) {
         return 0; // Fail
     }
 
+    set_bit_at(virtual_bitmap, va_pos);
     *(translate(NULL, va)) = (pte_t) pa;
     return 1; // Success
 }
@@ -306,7 +307,6 @@ int page_map(pde_t *pgdir, void *va, void *pa) {
 void *get_next_avail(int num_pages) {
     //Use virtual address bitmap to find the next free page
     position vp_position = first_available_position(virtual_bitmap);
-    set_bit_at(virtual_bitmap, vp_position);
 
     // Return a void * to the cell in our page table within which we 
     // may store a reference to a frame. Shift left by offset for proper va parsing.
