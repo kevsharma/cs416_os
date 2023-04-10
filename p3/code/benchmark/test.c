@@ -139,6 +139,7 @@ int main() {
     test_virtualaddr_extract();
     test_virtual_address_roundtrip();
     test_simple_roundtrip_single_page();
+    test_original();
 }
 
 
