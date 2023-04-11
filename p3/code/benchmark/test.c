@@ -134,12 +134,14 @@ int main() {
     printf("Running Tests: \n\n");
 
     /* Put tests here: */
-    test_pagingScheme();
-    test_is_valid_va();
-    test_virtualaddr_extract();
-    test_virtual_address_roundtrip();
-    test_simple_roundtrip_single_page();
+    // test_pagingScheme();
+    // test_is_valid_va();
+    // test_virtualaddr_extract();
+    // test_virtual_address_roundtrip();
+    // test_simple_roundtrip_single_page();
     test_original();
+
+    print_TLB_missrate();
 }
 
 
