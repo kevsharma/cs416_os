@@ -14,6 +14,8 @@ char *virtual_bitmap;
 char *frame_bitmap; 
 
 List *tlb_cache;
+unsigned long tlb_misses = 0;
+unsigned long tlb_lookups = 0;
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -172,9 +174,11 @@ void add_to_TLB(void *va, pte_t *frame) {
 
 /* Part 2: Check TLB for a valid translation. Returns the physical page address. */
 pte_t* check_TLB(void *va) {
-    if (!is_valid_va(va)) {
+    if (!is_valid_va(va) || !bit_set_at(virtual_bitmap, (unsigned long) va >> paging_scheme->offset)) {
         return NULL;
     }
+
+    ++tlb_lookups;
 
     tlb_store *target_tlb = search_and_remove(va);
     if (target_tlb) {
@@ -187,6 +191,7 @@ pte_t* check_TLB(void *va) {
         // No such translation in Cache. Add to valid but uncached va.
         pte_t *target_frame = fetch_pte_from(va);
         if (target_frame) {
+            ++tlb_misses;
             add_to_TLB(va, target_frame);
             return target_frame;
         } else {
@@ -200,13 +205,10 @@ pte_t* check_TLB(void *va) {
  * Feel free to extend the function arguments or return type.
  */
 void print_TLB_missrate() {
-    double miss_rate = 0;	
-
     /*Part 2 Code here to calculate and print the TLB miss rate*/
-
-
-
-
+    double miss_rate = ((double) tlb_misses) / ((double) tlb_lookups) * 100;	
+    // fprintf(stderr, "TLB misses: %lu \n", tlb_misses);
+    // fprintf(stderr, "TLB lookups: %lu \n", tlb_lookups);
     fprintf(stderr, "TLB miss rate %lf \n", miss_rate);
 }
 
@@ -263,8 +265,7 @@ The function takes a virtual address and page directories starting address and
 performs translation to return the physical address. Returns NULL if va is an invalid virtual address.
 */
 pte_t *translate(pde_t *pgdir, void *va) {
-    //return check_TLB(va);
-    return fetch_pte_from(va);
+    return check_TLB(va);
 }
 
 
