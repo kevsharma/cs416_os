@@ -115,6 +115,20 @@ void test_virtual_address_roundtrip() {
     printf("\nRoundtrip test works.\n");
 }
 
+void test_simple_roundtrip_single_page() {
+    void *a = t_malloc(sizeof(int));
+
+    int x = 4;
+    int ret = put_value(a, &x, sizeof(int));
+    assert(ret == 0); // success;
+
+    int x_roundtrip;
+    get_value(a, &x_roundtrip, sizeof(int));
+    assert(x == x_roundtrip); // read your writes
+
+    t_free(a, sizeof(int));
+}
+
 int main() {
     set_physical_mem();
     printf("Running Tests: \n\n");
@@ -124,6 +138,8 @@ int main() {
     test_is_valid_va();
     test_virtualaddr_extract();
     test_virtual_address_roundtrip();
+    test_simple_roundtrip_single_page();
+    test_original();
 }
 
 

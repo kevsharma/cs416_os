@@ -243,7 +243,7 @@ bool is_valid_va(void *va) {
 // To-DO ---> Test THIS (maybe after doing malloc/free).
 /* If va is invalid, returns NULL. */
 pte_t* fetch_pte_from(void *va) {
-    if (!is_valid_va(va)) {
+    if (!is_valid_va(va) || !bit_set_at(virtual_bitmap, (unsigned long) va >> paging_scheme->offset)) {
         return NULL;
     }
 
@@ -254,18 +254,6 @@ pte_t* fetch_pte_from(void *va) {
     // They must dereference the pointer to get the address of the frame (pa). 
     // This returns the location of the cell pointed to by va.
 }
-
-void* fetch_pa_from(void *va) {
-    pte_t *frame = fetch_pte_from(va);
-    if(frame == NULL) {
-        return NULL;
-    }
-
-    virtual_addr_t vaddy;
-    extract_from((unsigned long) va, &vaddy);
-    return (void *) *(frame + vaddy.byte_offset);
-}
-
 
 ///////////////////////////////////////////////////////////////////////////////////
 
@@ -297,7 +285,8 @@ int page_map(pde_t *pgdir, void *va, void *pa) {
         return 0; // Fail
     }
 
-    *(translate(NULL, va)) = (pte_t) pa;
+    set_bit_at(virtual_bitmap, va_pos);
+    *(translate(ptbr, va)) = (pte_t) pa;
     return 1; // Success
 }
 
@@ -306,7 +295,6 @@ int page_map(pde_t *pgdir, void *va, void *pa) {
 void *get_next_avail(int num_pages) {
     //Use virtual address bitmap to find the next free page
     position vp_position = first_available_position(virtual_bitmap);
-    set_bit_at(virtual_bitmap, vp_position);
 
     // Return a void * to the cell in our page table within which we 
     // may store a reference to a frame. Shift left by offset for proper va parsing.
@@ -325,7 +313,7 @@ void *t_malloc(unsigned int num_bytes) {
     if (!paging_scheme) {
         set_physical_mem();
     }
-  
+
     if (num_bytes == 0) {
         return NULL;
     }
@@ -339,30 +327,31 @@ void *t_malloc(unsigned int num_bytes) {
 
     /* The Virtual address of the first page (to be returned)*/
     void *first_page = NULL;
-    void **requested_frames = (void *) malloc(pages_requested * sizeof(void *));
+    unsigned long *requested_frames = (unsigned long *) malloc(pages_requested * sizeof(unsigned long));
 
     /* The links from one page to another. This is a Virtual address reference stored in the first 4 bytes
      * of a frame to document the on which virtual address the frame's payload continues.
      */
-    void **links = (void *) malloc(pages_requested * sizeof(void *));
-    memset(links, 0, pages_requested * sizeof(void *));
-
+    unsigned long *links = (unsigned long *) malloc(pages_requested * sizeof(unsigned long));
 
     for (unsigned long i = 0; i < pages_requested; ++i) {
         // Get the virtual address to store one of the frames in.
-        void *va = get_next_avail(0);
-        links[i] = va;
+        void *va = get_next_avail(0); // note that the offset bits are all unset.
+        links[i] = (unsigned long) va;
         first_page = first_page == NULL ? va : first_page;
 
         // Get the physical address of the frame.
         position frame_obtained = first_available_position(frame_bitmap);
         set_bit_at(frame_bitmap, frame_obtained);
         void *pa = pointer_to_frame_at_position(frame_obtained);
-        requested_frames[i] = pa;
+        requested_frames[i] = (unsigned long) pa;
         memset(pa, 0, PGSIZE);
 
         int mapped_successfully = page_map(ptbr, va, pa);
+
         assert(mapped_successfully);
+        assert(bit_set_at(virtual_bitmap, (unsigned long) va >> paging_scheme->offset));
+        assert(bit_set_at(frame_bitmap, frame_obtained));
     }
 
     // Say we allocated frames A, B, C for a request of 10,000 bytes with a 4096 page size.
@@ -370,8 +359,8 @@ void *t_malloc(unsigned int num_bytes) {
     // Copy &C into first four bytes of B;
     // Copy NULL into first four bytes of C (done previously using memset(pa, 0, PGSIZE))
     // Algorithm for such linking using data we kept track of previously: 
-    for (unsigned long i = 0; i < (pages_requested - 1); ++i) {
-        memcpy(requested_frames[i], links[i+1], sizeof(void *));
+    for (unsigned long j = 0; j < (pages_requested - 1); ++j) {
+        memcpy((void *) requested_frames[j], (links + j + 1), sizeof(unsigned long));
     }
 
     free(requested_frames);
@@ -395,13 +384,13 @@ bool valid_pages_linked_together_from(void *start, unsigned long num_links) {
 
     // Inductive Step
     position va_pos = ((unsigned long) start) >> paging_scheme->offset;
-    if (!is_valid_va(start) || bit_set_at(virtual_bitmap, va_pos)) {
+    if (!is_valid_va(start) || !bit_set_at(virtual_bitmap, va_pos)) {
         // This virtual page is not in use. Reject!
         return false;
     }
 
     // Start isn't null and num_links is > 0.
-    pte_t *pte_holding_frame = fetch_pte_from(start);
+    pte_t *pte_holding_frame = translate(ptbr, start);
     if (pte_holding_frame == NULL) {
         // The cell must be valid.
         return false;
@@ -412,12 +401,12 @@ bool valid_pages_linked_together_from(void *start, unsigned long num_links) {
         // The cell must hold a reference to a physical address.
         return false;
     }
-    
-    // Find the link.
-    void *new_start = NULL;
-    memcpy(new_start, pa, sizeof(void *));
 
-    return valid_pages_linked_together_from(new_start, num_links - 1);
+    // Find the link.
+    unsigned long new_start;
+    memcpy(&new_start, pa, sizeof(void *));
+
+    return valid_pages_linked_together_from((void *) new_start, num_links - 1);
 }
 
 void t_free_aux(void *start, unsigned long num_links) {
@@ -429,16 +418,15 @@ void t_free_aux(void *start, unsigned long num_links) {
     // Part 1: Inductive Step
     search_and_remove(start); // Part 2: Also, remove the translation from the TLB
 
-    pte_t *pte_holding_frame = fetch_pte_from(start);
-    
-    void *pa = (void *) *pte_holding_frame;
+    pte_t *pte_holding_frame = translate(ptbr, start);
+    void *pa = (void *) *(pte_holding_frame);
 
     // Mark the mapping from start virtual address to NULL, since we are freeing the frame.
     memset(pte_holding_frame, 0, sizeof(pte_t));
 
     // Find the link.
-    void *new_start = NULL;
-    memcpy(new_start, pa, sizeof(void *));
+    unsigned long new_start;
+    memcpy(&new_start, pa, sizeof(void *));
     
     unset_bit_at(virtual_bitmap, (position)(((unsigned long) start) >> paging_scheme->offset));
     unset_bit_at(frame_bitmap, frame_position_from_pointer(pa));
@@ -446,7 +434,7 @@ void t_free_aux(void *start, unsigned long num_links) {
     // Overwrite the page with empty bits so it can be reused again.
     memset(pa, 0, PGSIZE);
 
-    t_free_aux(new_start, num_links - 1);
+    t_free_aux((void *) new_start, num_links - 1);
 }
 
 /* Responsible for releasing one or more memory pages using virtual address (va) */
@@ -472,25 +460,37 @@ void t_free(void *va, int size) {
 }
 
 void put_value_aux(void *start, void *val, int bytes_remaining) {
+    /* HINT: Using the virtual address and translate(), find the physical page. Copy
+     * the contents of "val" to a physical page. NOTE: The "size" value can be larger 
+     * than one page. Therefore, you may have to find multiple pages using translate()
+     * function.
+     */
+
     // Base Step: 
     if (!bytes_remaining) {
         return;
     }
 
     // Inductive Step:
-    pte_t *pte_holding_frame = translate(NULL, start);
+    pte_t *pte_holding_frame = translate(ptbr, start);
     void *pa = (void *) *pte_holding_frame;
     
-    void *new_start = NULL;
-    memcpy(new_start, pa, sizeof(void *));
+    // Find the link.
+    unsigned long new_start;
+    memcpy(&new_start, pa, sizeof(void *));
 
-    pa += sizeof(void *); //  Point to payload not the first 4 bytes reserved for link.
+    pa += sizeof(void *); // Advance pa by the first bytes reserved for link pointer.
 
-    if (bytes_remaining <= PAYLOAD_BYTES) {
+    virtual_addr_t vaddy;
+    extract_from((unsigned long) start, &vaddy);
+    pa += vaddy.byte_offset;
+    size_t writeable_bytes = PAYLOAD_BYTES - vaddy.byte_offset;
+
+    if (bytes_remaining <= writeable_bytes) {
         memcpy(pa, val, bytes_remaining);
     } else {
-        memcpy(pa, val, PAYLOAD_BYTES);
-        put_value_aux(new_start, val + PAYLOAD_BYTES, bytes_remaining - PAYLOAD_BYTES);
+        memcpy(pa, val, writeable_bytes);
+        put_value_aux((void *) new_start, val + writeable_bytes, bytes_remaining - writeable_bytes);
     }
 }
 
@@ -499,57 +499,89 @@ void put_value_aux(void *start, void *val, int bytes_remaining) {
  * The function returns 0 if the put is successfull and -1 otherwise.
 */
 int put_value(void *va, void *val, int size) {
-
-    /* HINT: Using the virtual address and translate(), find the physical page. Copy
-     * the contents of "val" to a physical page. NOTE: The "size" value can be larger 
-     * than one page. Therefore, you may have to find multiple pages using translate()
-     * function.
-     */
+    virtual_addr_t vaddy;
+    extract_from((unsigned long) va, &vaddy);
+    
+    size += vaddy.byte_offset; // write starting at offset 100. Then if size is 4092, we need to enough pages for 4192 bytes.
     unsigned long num_pages_to_write_to = (size / PAYLOAD_BYTES) + ((size % PAYLOAD_BYTES) != 0);
     if (!valid_pages_linked_together_from(va, num_pages_to_write_to)) {
         printf("DEBUG: Not enough pages to accomodate put_value request.\n");
         return -1;
     }
 
+    size -= vaddy.byte_offset; // put_value_aux writes bytes starting from the offset it found and consumes size properly.
     put_value_aux(va, val, size);
     return 0;
 }
 
 void get_value_aux(void *start, void *val, int bytes_remaining) {
+    /* HINT: put the values pointed to by "va" inside the physical memory at given
+    * "val" address. Assume you can access "val" directly by derefencing them.
+    */
+    
     // Base Step: 
     if (!bytes_remaining) {
         return;
     }
 
     // Inductive Step:
-    pte_t *pte_holding_frame = translate(NULL, start);
+    pte_t *pte_holding_frame = translate(ptbr, start);
     void *pa = (void *) *pte_holding_frame;
     
-    void *new_start = NULL;
-    memcpy(new_start, pa, sizeof(void *));
+    // Find the link.
+    unsigned long new_start;
+    memcpy(&new_start, pa, sizeof(void *));
 
-    pa += sizeof(void *); // Ignore the first bytes reserved for link pointer.
+    pa += sizeof(void *); // Advance pa by the first bytes reserved for link pointer.
 
-    if (bytes_remaining <= PAYLOAD_BYTES) {
+    /**
+     * Caution: fragile writing scheme.
+     * Assume our PGSIZE is 4096 bytes.
+     * The first 4 bytes are reserved to reference the continuing non-contiguous page.
+     * So our PAYLOAD_BYTES are 4096 - 4 = 4092. For this example, lets suppose the 
+     * request wishes to read the entire payload amount of 4092. That is, size = 4092.
+     * 
+     * However, what if the virtual address pointed to by start contains a non-zero offset?
+     * We reserve log2(4096) = 12 bits for the offset. So it is entirely possible that 
+     * the client has requested to read from an offset off of the payload start at byte 4.
+     * 
+     * let us say that the offset is 100 (in decimal-notation). Then we must
+     * read starting from 4 + 100 = byte 104. 
+     * 
+     * Accordingly, we would end up only reading 4096 - 104 = 4092 - 100 = 3992 bytes
+     * from this page and have to read the remaining 100 bytes from the successor 
+     * non-contiguous page pointed to by new_start.
+    */
+
+    virtual_addr_t vaddy;
+    extract_from((unsigned long) start, &vaddy);
+    pa += vaddy.byte_offset;
+    size_t readable_bytes = PAYLOAD_BYTES - vaddy.byte_offset;
+
+    if (bytes_remaining <= readable_bytes) {
         memcpy(val, pa, bytes_remaining);
     } else {
         // We will write PAYLOAD_Bytes to this val and find remaining data from next link.c
-        memcpy(val, pa, PAYLOAD_BYTES);
-        get_value(new_start, val + PAYLOAD_BYTES, bytes_remaining - PAYLOAD_BYTES);
+        memcpy(val, pa, readable_bytes);
+        get_value_aux((void *) new_start, val + readable_bytes, bytes_remaining - readable_bytes);
     }
 }
 
 
 /*Given a virtual address, this function copies the contents of the page to val*/
 void get_value(void *va, void *val, int size) {
-    /* HINT: put the values pointed to by "va" inside the physical memory at given
-    * "val" address. Assume you can access "val" directly by derefencing them.
-    */
+    virtual_addr_t vaddy;
+    extract_from((unsigned long) va, &vaddy);
+    
+    size += vaddy.byte_offset; // read from offset 100. Then if size is 4092, we need to enough pages for 4192 bytes.
     unsigned long num_pages_to_write_to = (size / PAYLOAD_BYTES) + ((size % PAYLOAD_BYTES) != 0);
+
     if (!valid_pages_linked_together_from(va, num_pages_to_write_to)) {
         printf("DEBUG: Failed get_value verification check.\n");
     }
 
+    // Next get_value_aux will read bytes starting from the offset it found, so we pass in 4092 instead of 4192.
+    size -= vaddy.byte_offset;
     get_value_aux(va, val, size);
 }
 
@@ -624,8 +656,8 @@ void unset_bit_at(char *bitmap, position p) {
 position lowest_unset_bit(char c) {
     position pos = 0;
     for(pos = 0; pos <= 7; ++pos) {
-        if (!(c & (1 << pos))) {
-            return 7 - pos;
+        if (!(c & (1 << (7 - pos)))) {
+            return pos;
         }
     }
 
@@ -651,7 +683,7 @@ bool n_bits_available(char *bitmap, unsigned long n) {
     for(position i = 0; i < (1 << (short) paging_scheme->chars_for_bitmap); ++i) {
         for(position pos = 0; pos <= 7; ++pos) {
             // If a bit is unset, then decrement n. 
-            n = (bitmap[i] & (1 << pos)) ? n : n - 1;
+            n = (bitmap[i] & (1 << (7 - pos))) ? n : n - 1;
             if (n == 0) {
                 return true;
             }
@@ -665,7 +697,7 @@ unsigned long num_bits_set(char *bitmap) {
     unsigned int count = 0;
     for(position i = 0; i < (1 << (short) paging_scheme->chars_for_bitmap); ++i) {
         for(position pos = 0; pos <= 7; ++pos) {
-            count = (bitmap[i] & (1 << pos)) ? count + 1 : count;
+            count = (bitmap[i] & (1 << (7 - pos))) ? count + 1 : count;
         }
     }
 
