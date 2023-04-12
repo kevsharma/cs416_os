@@ -17,6 +17,8 @@ List *tlb_cache;
 unsigned long tlb_misses = 0;
 unsigned long tlb_lookups = 0;
 
+pthread_mutex_t library_lock;
+
 //////////////////////////////////////////////////////////////////////////
 
 void* pointer_to_frame_at_position(position f) {
@@ -84,6 +86,8 @@ void set_physical_mem() {
     memset(vm_start, 0, MEMSIZE);
 
     init_page_tables();
+
+    pthread_mutex_init(&library_lock, NULL);
 
     // Register clean up function. 
     atexit(clean_my_vm);
@@ -724,6 +728,8 @@ void clean_my_vm(void) {
     }
 
     free(tlb_cache);
+
+    pthread_mutex_destroy(&library_lock);
 }
 
 
