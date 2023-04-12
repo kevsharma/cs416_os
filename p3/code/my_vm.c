@@ -319,7 +319,10 @@ void *t_malloc(unsigned int num_bytes) {
         set_physical_mem();
     }
 
+    pthread_mutex_lock(&library_lock);
+
     if (num_bytes == 0) {
+        pthread_mutex_unlock(&library_lock);
         return NULL;
     }
 
@@ -327,6 +330,7 @@ void *t_malloc(unsigned int num_bytes) {
 
     if (!n_bits_available(virtual_bitmap, pages_requested) || 
     !n_bits_available(frame_bitmap, pages_requested)) {
+        pthread_mutex_unlock(&library_lock);
         return NULL;
     }
 
@@ -371,6 +375,7 @@ void *t_malloc(unsigned int num_bytes) {
     free(requested_frames);
     free(links);
 
+    pthread_mutex_unlock(&library_lock);
     return first_page;
 }
 
@@ -443,13 +448,17 @@ void t_free_aux(void *start, unsigned long num_links) {
 }
 
 /* Responsible for releasing one or more memory pages using virtual address (va) */
-void t_free(void *va, int size) {   
-    if (size == 0) {
+void t_free(void *va, int size) { 
+    pthread_mutex_lock(&library_lock);  
+    
+    if (size == 0) { 
+        pthread_mutex_unlock(&library_lock);
         return;
     }
     
     if (!paging_scheme) {
-        set_physical_mem();
+        pthread_mutex_unlock(&library_lock);
+        return;
     }
 
     unsigned long pages_requested = (size / PAYLOAD_BYTES) + ((size % PAYLOAD_BYTES) != 0);
@@ -461,7 +470,9 @@ void t_free(void *va, int size) {
          * Part 2: Also, remove the translation from the TLB
          */
         t_free_aux(va, pages_requested);
-    }   
+    } 
+
+    pthread_mutex_unlock(&library_lock);  
 }
 
 void put_value_aux(void *start, void *val, int bytes_remaining) {
@@ -504,18 +515,23 @@ void put_value_aux(void *start, void *val, int bytes_remaining) {
  * The function returns 0 if the put is successfull and -1 otherwise.
 */
 int put_value(void *va, void *val, int size) {
+    pthread_mutex_lock(&library_lock);
+    
     virtual_addr_t vaddy;
     extract_from((unsigned long) va, &vaddy);
     
     size += vaddy.byte_offset; // write starting at offset 100. Then if size is 4092, we need to enough pages for 4192 bytes.
     unsigned long num_pages_to_write_to = (size / PAYLOAD_BYTES) + ((size % PAYLOAD_BYTES) != 0);
     if (!valid_pages_linked_together_from(va, num_pages_to_write_to)) {
+        pthread_mutex_unlock(&library_lock);
         printf("DEBUG: Not enough pages to accomodate put_value request.\n");
         return -1;
     }
 
     size -= vaddy.byte_offset; // put_value_aux writes bytes starting from the offset it found and consumes size properly.
     put_value_aux(va, val, size);
+
+    pthread_mutex_unlock(&library_lock);
     return 0;
 }
 
@@ -575,6 +591,8 @@ void get_value_aux(void *start, void *val, int bytes_remaining) {
 
 /*Given a virtual address, this function copies the contents of the page to val*/
 void get_value(void *va, void *val, int size) {
+    pthread_mutex_lock(&library_lock);
+    
     virtual_addr_t vaddy;
     extract_from((unsigned long) va, &vaddy);
     
@@ -582,12 +600,15 @@ void get_value(void *va, void *val, int size) {
     unsigned long num_pages_to_write_to = (size / PAYLOAD_BYTES) + ((size % PAYLOAD_BYTES) != 0);
 
     if (!valid_pages_linked_together_from(va, num_pages_to_write_to)) {
+        pthread_mutex_unlock(&library_lock);
         printf("DEBUG: Failed get_value verification check.\n");
     }
 
     // Next get_value_aux will read bytes starting from the offset it found, so we pass in 4092 instead of 4192.
     size -= vaddy.byte_offset;
     get_value_aux(va, val, size);
+    
+    pthread_mutex_unlock(&library_lock);
 }
 
 
