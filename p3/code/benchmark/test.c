@@ -1,8 +1,8 @@
 #include <stdbool.h>
 #include "../my_vm.h"
 
-#define SIZE 5
-#define ARRAY_SIZE 400
+#define SIZE 75
+#define ARRAY_SIZE 50000
 
 int test_original() {
     printf("Allocating three arrays of %d bytes\n", ARRAY_SIZE);
@@ -12,7 +12,7 @@ int test_original() {
     void *b = t_malloc(ARRAY_SIZE);
     void *c = t_malloc(ARRAY_SIZE);
     int x = 1;
-    int y, z;
+    int y, z;   
     int i =0, j=0;
     int address_a = 0, address_b = 0;
     int address_c = 0;
@@ -129,6 +129,85 @@ void test_simple_roundtrip_single_page() {
     t_free(a, sizeof(int));
 }
 
+void test_original_multithreaded_aux() {
+    char file_path[512];
+    sprintf(file_path, "mt_test_file%ld", pthread_self());
+    FILE *fp = fopen(file_path, "w");
+
+    fprintf(fp, "Allocating three arrays of %d bytes\n", ARRAY_SIZE);
+
+    void *a = t_malloc(ARRAY_SIZE);
+    int old_a = (int)a;
+    void *b = t_malloc(ARRAY_SIZE);
+    void *c = t_malloc(ARRAY_SIZE);
+    int x = 1;
+    int y, z;   
+    int i =0, j=0;
+    int address_a = 0, address_b = 0;
+    int address_c = 0;
+
+    fprintf(fp, "Addresses of the allocations: %x, %x, %x\n", (int)a, (int)b, (int)c);
+
+    fprintf(fp, "Storing integers to generate a SIZExSIZE matrix\n");
+    for (i = 0; i < SIZE; i++) {
+        for (j = 0; j < SIZE; j++) {
+            address_a = (unsigned int)a + ((i * SIZE * sizeof(int))) + (j * sizeof(int));
+            address_b = (unsigned int)b + ((i * SIZE * sizeof(int))) + (j * sizeof(int));
+            put_value((void *)address_a, &x, sizeof(int));
+            put_value((void *)address_b, &x, sizeof(int));
+        }
+    } 
+
+    fprintf(fp, "Fetching matrix elements stored in the arrays\n");
+
+    for (i = 0; i < SIZE; i++) {
+        for (j = 0; j < SIZE; j++) {
+            address_a = (unsigned int)a + ((i * SIZE * sizeof(int))) + (j * sizeof(int));
+            address_b = (unsigned int)b + ((i * SIZE * sizeof(int))) + (j * sizeof(int));
+            get_value((void *)address_a, &y, sizeof(int));
+            get_value( (void *)address_b, &z, sizeof(int));
+            fprintf(fp, "%d ", y);
+        }
+        fprintf(fp, "\n");
+    } 
+
+    fprintf(fp, "Performing matrix multiplication with itself!\n");
+    mat_mult(a, b, SIZE, c);
+
+
+    for (i = 0; i < SIZE; i++) {
+        for (j = 0; j < SIZE; j++) {
+            address_c = (unsigned int)c + ((i * SIZE * sizeof(int))) + (j * sizeof(int));
+            get_value((void *)address_c, &y, sizeof(int));
+            fprintf(fp, "%d ", y);
+        }
+        fprintf(fp, "\n");
+    }
+
+    fprintf(fp, "Freeing the allocations!\n");
+    t_free(a, ARRAY_SIZE);
+    t_free(b, ARRAY_SIZE);
+    t_free(c, ARRAY_SIZE);
+
+    fclose(fp);
+}
+
+void test_original_multithreaded() {
+    pthread_t t1, t2, t3, t4, t5;
+    
+    pthread_create(&t1, NULL, (void *) &test_original_multithreaded_aux, NULL);
+    pthread_create(&t2, NULL, (void *) &test_original_multithreaded_aux, NULL);
+    pthread_create(&t3, NULL, (void *) &test_original_multithreaded_aux, NULL);
+    pthread_create(&t4, NULL, (void *) &test_original_multithreaded_aux, NULL);
+    pthread_create(&t5, NULL, (void *) &test_original_multithreaded_aux, NULL);
+
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    pthread_join(t3, NULL);
+    pthread_join(t4, NULL);
+    pthread_join(t5, NULL);
+}
+
 int main() {
     set_physical_mem();
     printf("Running Tests: \n\n");
@@ -139,7 +218,8 @@ int main() {
     // test_virtualaddr_extract();
     // test_virtual_address_roundtrip();
     // test_simple_roundtrip_single_page();
-    test_original();
+    // test_original();
+    // test_original_multithreaded();
 
     print_TLB_missrate();
 }
