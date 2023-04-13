@@ -304,7 +304,7 @@ int page_map(pde_t *pgdir, void *va, void *pa) {
     }
 
     set_bit_at(virtual_bitmap, va_pos);
-    *(translate(ptbr, va)) = (pte_t) pa;
+    *(translate(ptbr, va)) = (pte_t) pa; // Adds to TLB - Compulsory Miss
     return 1; // Success
 }
 
