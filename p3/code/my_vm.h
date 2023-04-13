@@ -77,7 +77,7 @@ typedef struct {
     num_bits_t chars_for_bitmap;    // max_pages - 3 {2^3 per char}
 } paging_scheme_t;
 
-num_bits_t num_bits_needed_to_encode(unsigned long val);
+num_bits_t num_bits_needed_to_encode(unsigned long long val);
 void init_paging_scheme(paging_scheme_t *ps);
 void print_paging_scheme(paging_scheme_t *ps);
 

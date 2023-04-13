@@ -615,27 +615,34 @@ void get_value(void *va, void *val, int size) {
 ///////////////////////////////////////////////////////////////////////////////////
 
 
-num_bits_t num_bits_needed_to_encode(unsigned long val) {
+num_bits_t num_bits_needed_to_encode(unsigned long long val) {
     num_bits_t n;
     for (n = 0; val; val >>= 1, ++n);
     return n - 1;
 }
 
 void init_paging_scheme(paging_scheme_t *ps) {
-    ps->va_space = 32;
-    ps->pa_space = num_bits_needed_to_encode(MEMSIZE);
+    ps->va_space = num_bits_needed_to_encode((unsigned long long) MAX_MEMSIZE);
+    ps->pa_space = num_bits_needed_to_encode((unsigned long long) MEMSIZE);
     ps->max_bits = ps->pa_space < ps->va_space ? ps->pa_space : ps->va_space;
     
-    ps->offset = num_bits_needed_to_encode(PGSIZE);
+    // Bits for Page Offset (data bytes).
+    ps->offset = num_bits_needed_to_encode((unsigned long long) PGSIZE);
     ps->max_pages = ps->max_bits - ps->offset;
 
-    ps->page_table = num_bits_needed_to_encode(PGSIZE / sizeof(pte_t));
-    ps->page_dir = ps->max_pages - ps->page_table;
+    // Bits for Page Table. 
+    num_bits_t table_dir_max = num_bits_needed_to_encode((unsigned long long) PGSIZE / sizeof(unsigned long));
+    ps->page_table = table_dir_max;
     
-    ps->chars_for_bitmap = ps->max_pages - 3;
+    // Bits for Page Directory.
+    num_bits_t remaining = ps->max_pages - ps->page_table;
+    // Pick lesser of the two for page_dir so we only have as many Virtual Pages as can be allocated at once.
+    ps->page_dir = table_dir_max < remaining ? table_dir_max : remaining;
+    
+    ps->chars_for_bitmap = (ps->page_dir + ps->page_table) - 3;
 
-    assert(ps->max_pages == (ps->page_dir + ps->page_table));
-    assert(ps->max_bits == (ps->max_pages + ps->offset));
+    assert(ps->max_pages >= (ps->page_dir + ps->page_table));
+    assert(ps->max_bits >= (ps->max_pages + ps->offset));
 }
 
 void print_paging_scheme(paging_scheme_t *ps) {
