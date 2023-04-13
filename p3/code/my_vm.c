@@ -3,7 +3,6 @@
 //////////////////////////////////////////////////////////////////////////
 
 paging_scheme_t *paging_scheme;
-
 void *vm_start;
 
 pde_t *ptbr; /* Page table base register - root page dir address. */
@@ -17,6 +16,7 @@ List *tlb_cache;
 unsigned long tlb_misses = 0;
 unsigned long tlb_lookups = 0;
 
+volatile atomic_uint first_invocation = ATOMIC_VAR_INIT(0);
 pthread_mutex_t library_lock;
 
 //////////////////////////////////////////////////////////////////////////
@@ -315,9 +315,15 @@ void *get_next_avail(int num_pages) {
     */
 void *t_malloc(unsigned int num_bytes) {
     // Init supporting structs if called for the first time:
+    while(__atomic_test_and_set(&first_invocation, __ATOMIC_SEQ_CST));
+
     if (!paging_scheme) {
+        // Important: only one thread should ever execute set_physical_mem();
         set_physical_mem();
     }
+    __atomic_store_n(&first_invocation, 0, __ATOMIC_SEQ_CST);
+
+    /* Supporting structures have all been allocated successfully: */
 
     pthread_mutex_lock(&library_lock);
 
@@ -448,18 +454,12 @@ void t_free_aux(void *start, unsigned long num_links) {
 }
 
 /* Responsible for releasing one or more memory pages using virtual address (va) */
-void t_free(void *va, int size) { 
-    pthread_mutex_lock(&library_lock);  
-    
-    if (size == 0) { 
-        pthread_mutex_unlock(&library_lock);
+void t_free(void *va, int size) {  
+    if (size == 0 || !paging_scheme) { 
         return;
     }
     
-    if (!paging_scheme) {
-        pthread_mutex_unlock(&library_lock);
-        return;
-    }
+    pthread_mutex_lock(&library_lock);
 
     unsigned long pages_requested = (size / PAYLOAD_BYTES) + ((size % PAYLOAD_BYTES) != 0);
     if (valid_pages_linked_together_from(va, pages_requested)) {
