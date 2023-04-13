@@ -4,7 +4,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <assert.h>
-#include<string.h>
+#include <string.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 //Assume the address space is 32 bits, so the max memory size is 4GB
 //Page size is 4KB
