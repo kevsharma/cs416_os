@@ -1,3 +1,16 @@
+/**
+ * Project 3: User Level Memory Management
+ * ---------------------------------------
+ *  The template for this project was 
+ *  authored by Rutgers' CS416 Instructor(s).
+ * 
+ *  Completion of Template for purpose of assignment:
+ * 	Author: Kev Sharma | kks107
+ *  Author: Yash Patel | yp315
+ * 
+ *  Tested on [ls.cs.rutgers.edu] solely with 32 bits.
+*/
+
 #include "my_vm.h"
 
 //////////////////////////////////////////////////////////////////////////
