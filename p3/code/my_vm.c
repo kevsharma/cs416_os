@@ -10,7 +10,7 @@ size_t PAYLOAD_BYTES = PGSIZE - sizeof(void *);
 
 // Orientation: Left to Right, /* Set third bit = 0010 */
 char *virtual_bitmap;
-char *frame_bitmap; 
+char *frame_bitmap;
 
 List *tlb_cache;
 unsigned long tlb_misses = 0;
@@ -495,18 +495,25 @@ void put_value_aux(void *start, void *val, int bytes_remaining) {
     unsigned long new_start;
     memcpy(&new_start, pa, sizeof(void *));
 
-    pa += sizeof(void *); // Advance pa by the first bytes reserved for link pointer.
-
     virtual_addr_t vaddy;
     extract_from((unsigned long) start, &vaddy);
-    pa += vaddy.byte_offset;
-    size_t writeable_bytes = PAYLOAD_BYTES - vaddy.byte_offset;
 
-    if (bytes_remaining <= writeable_bytes) {
-        memcpy(pa, val, bytes_remaining);
+    // byte_offset can go up to PGSIZE - 1 (which can be greater than PAYLOAD_BYTES)
+    if (vaddy.byte_offset > PAYLOAD_BYTES) {
+        // We will not write any data to this page.
+        new_start |= (vaddy.byte_offset - PAYLOAD_BYTES);
+        put_value_aux((void *) new_start, val, bytes_remaining);
     } else {
-        memcpy(pa, val, writeable_bytes);
-        put_value_aux((void *) new_start, val + writeable_bytes, bytes_remaining - writeable_bytes);
+        pa += sizeof(void *); // Advance pa by the first bytes reserved for link pointer.
+        pa += vaddy.byte_offset;
+        size_t writeable_bytes = PAYLOAD_BYTES - vaddy.byte_offset;
+
+        if (bytes_remaining <= writeable_bytes) {
+            memcpy(pa, val, bytes_remaining);
+        } else {
+            memcpy(pa, val, writeable_bytes);
+            put_value_aux((void *) new_start, val + writeable_bytes, bytes_remaining - writeable_bytes);
+        }
     }
 }
 
@@ -553,8 +560,6 @@ void get_value_aux(void *start, void *val, int bytes_remaining) {
     unsigned long new_start;
     memcpy(&new_start, pa, sizeof(void *));
 
-    pa += sizeof(void *); // Advance pa by the first bytes reserved for link pointer.
-
     /**
      * Caution: fragile writing scheme.
      * Assume our PGSIZE is 4096 bytes.
@@ -572,19 +577,33 @@ void get_value_aux(void *start, void *val, int bytes_remaining) {
      * Accordingly, we would end up only reading 4096 - 104 = 4092 - 100 = 3992 bytes
      * from this page and have to read the remaining 100 bytes from the successor 
      * non-contiguous page pointed to by new_start.
+     * 
+     * Note further, that if PAYLOAD BYTES is 4092, then what if the virtual address (start)
+     * passed in has an offset value > 4092 but less than 4096? In this case, we must 
+     * descend to the next link and begin reading from there. Suppose offset was 4095. Then
+     * we begin reading from the 4095-4092 byte = 3rd byte. That is, we read from pa + 4 + 3
+     * of the next linked page.
     */
 
     virtual_addr_t vaddy;
     extract_from((unsigned long) start, &vaddy);
-    pa += vaddy.byte_offset;
-    size_t readable_bytes = PAYLOAD_BYTES - vaddy.byte_offset;
 
-    if (bytes_remaining <= readable_bytes) {
-        memcpy(val, pa, bytes_remaining);
+    if (vaddy.byte_offset > PAYLOAD_BYTES) {
+        // We will not read any data from this page.
+        new_start |= (vaddy.byte_offset - PAYLOAD_BYTES);
+        get_value_aux((void *) new_start, val, bytes_remaining);
     } else {
-        // We will write PAYLOAD_Bytes to this val and find remaining data from next link.c
-        memcpy(val, pa, readable_bytes);
-        get_value_aux((void *) new_start, val + readable_bytes, bytes_remaining - readable_bytes);
+        pa += sizeof(void *); // Advance pa by the first bytes reserved for link pointer.
+        pa += vaddy.byte_offset;
+        size_t readable_bytes = PAYLOAD_BYTES - vaddy.byte_offset;
+
+        if (bytes_remaining <= readable_bytes) {
+            memcpy(val, pa, bytes_remaining);
+        } else {
+            // We will write PAYLOAD_Bytes to this val and find remaining data from next link.c
+            memcpy(val, pa, readable_bytes);
+            get_value_aux((void *) new_start, val + readable_bytes, bytes_remaining - readable_bytes);
+        }
     }
 }
 
