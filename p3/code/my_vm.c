@@ -175,7 +175,7 @@ void evict_lru_cached_entry() {
 }
 
 /* Part 2: Add a virtual to physical page translation to the TLB.*/
-void add_to_TLB(void *va, pte_t *frame) {
+void add_TLB(void *va, pte_t *frame) {
     if (tlb_cache->size == TLB_ENTRIES) {
         evict_lru_cached_entry();
     }
@@ -209,7 +209,7 @@ pte_t* check_TLB(void *va) {
         pte_t *target_frame = fetch_pte_from(va);
         if (target_frame) {
             ++tlb_misses;
-            add_to_TLB(va, target_frame);
+            add_TLB(va, target_frame);
             return target_frame;
         } else {
             return NULL;

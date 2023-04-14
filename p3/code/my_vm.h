@@ -57,7 +57,7 @@ typedef struct List {
 
 void print_TLB_missrate();
 pte_t* check_TLB(void *va);
-void add_to_TLB(void *va, pte_t *frame);
+void add_TLB(void *va, pte_t *frame);
 
 void set_physical_mem();
 pte_t* translate(pde_t *pgdir, void *va);
