@@ -1,8 +1,8 @@
 #include <stdbool.h>
 #include "../my_vm.h"
 
-#define SIZE 75
-#define ARRAY_SIZE 50000
+#define SIZE 5
+#define ARRAY_SIZE 400
 
 int test_original() {
     printf("Allocating three arrays of %d bytes\n", ARRAY_SIZE);
@@ -210,7 +210,6 @@ void test_original_multithreaded() {
 
 int main() {
     set_physical_mem();
-    printf("Running Tests: \n\n");
 
     /* Put tests here: */
     // test_pagingScheme();
@@ -218,7 +217,7 @@ int main() {
     // test_virtualaddr_extract();
     // test_virtual_address_roundtrip();
     // test_simple_roundtrip_single_page();
-    // test_original();
+    test_original();
     // test_original_multithreaded();
 
     print_TLB_missrate();
