@@ -24,7 +24,15 @@
 
 char diskfile_path[PATH_MAX];
 
+// total inode blocks 64
+size_t NUM_INODE_BLKS = (MAX_INUM)/(BLOCK_SIZE/sizeof(struct inode));
+size_t INODE_BITMAP_BYTES = MAX_INUM / 8;
+size_t DATA_BLOCK_BITMAP_BYTES = MAX_DNUM / 8;
+
 // Declare your in-memory data structures here
+struct superblock* superblock;
+bitmap_t* inode_bitmap;
+bitmap_t* data_block_bitmap;
 
 /* 
  * Get available inode number from bitmap
@@ -140,16 +148,54 @@ int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
 int rufs_mkfs() {
 
 	// Call dev_init() to initialize (Create) Diskfile
+	dev_init(diskfile_path);
 
 	// write superblock information
+	superblock = malloc(sizeof(struct superblock));
+	memset(superblock,0,sizeof(struct superblock));
+
+	superblock->magic_num = MAGIC_NUM;
+	superblock->max_inum = MAX_INUM;
+	superblock->max_dnum = MAX_DNUM;
+	superblock->i_bitmap_blk = 1; // 1 index
+	superblock->d_bitmap_blk = (superblock->i_bitmap_blk) + 1;
+	superblock->i_start_blk = (superblock->d_bitmap_blk) + 1;
+	superblock->d_start_blk = (superblock->i_start_blk) + NUM_INODE_BLKS;
+
+	bio_write(0,(void*) superblock);
 
 	// initialize inode bitmap
-
+	inode_bitmap = (bitmap_t *) malloc(INODE_BITMAP_BYTES);
+	memset(inode_bitmap, 0, INODE_BITMAP_BYTES);
+	
 	// initialize data block bitmap
+	data_block_bitmap = (bitmap_t) malloc(DATA_BLOCK_BITMAP_BYTES);
+	memset(data_block_bitmap, 0, DATA_BLOCK_BITMAP_BYTES);
+	
+	//Temp Inode that get written into disk
+	struct inode* temp_inode = malloc(sizeof(struct inode*));
+	memset(temp_inode,0,sizeof(struct inode*));
+	temp_inode->valid = INVALID;
+
+	for(int i = 0; i < 16; ++i){
+		temp_inode->direct_ptr[i] = 0;
+	}
+
+	//Changes the Inode number to i and writes to disk
+	for(int i = 1; i < MAX_INUM; ++i){
+		temp_inode->ino = i;
+		writei(i,temp_inode);
+	}
+	free(temp_inode);
+
+	set_bitmap(inode_bitmap,0);
 
 	// update bitmap information for root directory
+	bio_write(superblock->i_bitmap_blk, (void*) inode_bitmap);
+	bio_write(superblock->d_bitmap_blk, (void*) data_block_bitmap);
 
 	// update inode for root directory
+	//TODO: create and update inode for root directory "/"
 
 	return 0;
 }
@@ -171,9 +217,12 @@ static void *rufs_init(struct fuse_conn_info *conn) {
 static void rufs_destroy(void *userdata) {
 
 	// Step 1: De-allocate in-memory data structures
+	free(superblock);
+	free(inode_bitmap);
+	free(data_block_bitmap);
 
 	// Step 2: Close diskfile
-
+	dev_close();
 }
 
 static int rufs_getattr(const char *path, struct stat *stbuf) {
