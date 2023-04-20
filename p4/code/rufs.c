@@ -39,13 +39,39 @@ bitmap_t* data_block_bitmap;
  */
 int get_avail_ino() {
 
+	if (superblock == NULL){
+		// we can either error out or get superblock then if its still cant get it then exit
+	}
+
 	// Step 1: Read inode bitmap from disk
-	
+	bitmap_t* buf = malloc(BLOCK_SIZE);
+	if(bio_read(superblock->i_bitmap_blk, buf) <= 0){
+		perror("RUFS: failed to read from block exiting\n");
+		free(buf);
+		exit(1);
+	}
+	memcpy(inode_bitmap,buf,INODE_BITMAP_BYTES); //copys bitmap bytes to local bitmap
 	// Step 2: Traverse inode bitmap to find an available slot
-
+	int ret = -1;
+	int i;
+	for (i = 0; i < MAX_INUM; ++i){
+		if(!get_bitmap(inode_bitmap,i)){
+			ret = i;
+			break;
+		}
+	}
 	// Step 3: Update inode bitmap and write to disk 
-
-	return 0;
+	if(ret >= 0){
+		set_bitmap(inode_bitmap,ret);
+		memcpy(buf,inode_bitmap,INODE_BITMAP_BYTES); //copys bitmap bytes to buf
+		if(bio_write(superblock->i_bitmap_blk,buf) < 0){
+			perror("RUFS: failed to write to the block exiting\n");
+			free(buf);
+			exit(1);
+		}
+	}
+	free(buf);
+	return ret;
 }
 
 /* 
@@ -53,13 +79,38 @@ int get_avail_ino() {
  */
 int get_avail_blkno() {
 
+	if (superblock == NULL){
+		// we can either error out or get superblock then if its still cant get it then exit
+	}
+
 	// Step 1: Read data block bitmap from disk
-	
+	bitmap_t* buf = malloc(BLOCK_SIZE);
+	if(bio_read(superblock->d_bitmap_blk, buf) <= 0){
+		perror("RUFS: failed to read from data bitmap block\nexiting\n");
+		exit(1);
+	}
+	memcpy(data_block_bitmap,buf,DATA_BLOCK_BITMAP_BYTES); //copys bitmap bytes to local bitmap
 	// Step 2: Traverse data block bitmap to find an available slot
+	int ret = -1;
+	int i;
+	for (i = 0; i < MAX_DNUM; ++i){
+		if(!get_bitmap(data_block_bitmap,i)){
+			ret = i;
+			break;
+		}
+	}
 
 	// Step 3: Update data block bitmap and write to disk 
-
-	return 0;
+	if(ret >= 0){
+		set_bitmap(data_block_bitmap,ret);
+		memcpy(buf,data_block_bitmap,DATA_BLOCK_BITMAP_BYTES);
+		if(bio_write(superblock->d_bitmap_blk,buf) < 0){
+			perror("RUFS: failed to write to the data bitmap block exiting\n");
+			exit(1);
+		}
+	}
+	
+	return ret;
 }
 
 /* 
@@ -67,24 +118,43 @@ int get_avail_blkno() {
  */
 int readi(uint16_t ino, struct inode *inode) {
 
-  // Step 1: Get the inode's on-disk block number
+	// Step 1: Get the inode's on-disk block number
+	int blk = (ino * sizeof(struct inode))/BLOCK_SIZE;
 
-  // Step 2: Get offset of the inode in the inode on-disk block
+	// Step 2: Get offset of the inode in the inode on-disk block
+	int offset = ino % (BLOCK_SIZE/sizeof(struct inode));
 
-  // Step 3: Read the block from disk and then copy into inode structure
+	// Step 3: Read the block from disk and then copy into inode structure
+	struct inode* buf = (struct inode*) malloc(BLOCK_SIZE);
 
-	return 0;
+	bio_read(blk,buf); //TODO add error check
+
+	struct inode temp = buf[offset];
+	memcpy(inode,&temp,sizeof(struct inode));
+
+	free(buf);
+	return 1;
 }
 
 int writei(uint16_t ino, struct inode *inode) {
 
 	// Step 1: Get the block number where this inode resides on disk
+	int blk = (ino * sizeof(struct inode))/BLOCK_SIZE;
 	
 	// Step 2: Get the offset in the block where this inode resides on disk
+	int offset = ino % (BLOCK_SIZE/sizeof(struct inode));
 
 	// Step 3: Write inode to disk 
+	struct inode* buf = (struct inode*) malloc(BLOCK_SIZE);
 
-	return 0;
+	bio_read(blk,buf);
+
+	buf[offset] = *(inode);
+	//TODO look into stat stuff if that is needed
+
+	bio_write(blk,buf);
+	free(buf);
+	return 1;
 }
 
 
@@ -195,7 +265,7 @@ int rufs_mkfs() {
 	bio_write(superblock->d_bitmap_blk, (void*) data_block_bitmap);
 
 	// update inode for root directory
-	//TODO: create and update inode for root directory "/"
+	// TODO: create and update inode for root directory "/"
 
 	return 0;
 }
@@ -207,9 +277,29 @@ int rufs_mkfs() {
 static void *rufs_init(struct fuse_conn_info *conn) {
 
 	// Step 1a: If disk file is not found, call mkfs
+	// Step 1b: If disk file is found, just initialize in-memory data structures
+  	// and read superblock from disk
+	if(dev_open(diskfile_path) < 0){
+		rufs_mkfs();
+	}
+	else{
+		superblock = malloc(sizeof(struct superblock));
+		memset(superblock,0,sizeof(struct superblock));
 
-  // Step 1b: If disk file is found, just initialize in-memory data structures
-  // and read superblock from disk
+		inode_bitmap = (bitmap_t *) malloc(INODE_BITMAP_BYTES);
+		memset(inode_bitmap, 0, INODE_BITMAP_BYTES);
+
+		data_block_bitmap = (bitmap_t) malloc(DATA_BLOCK_BITMAP_BYTES);
+		memset(data_block_bitmap, 0, DATA_BLOCK_BITMAP_BYTES);
+
+		struct superblock* buf = (struct superblock*) malloc(BLOCK_SIZE);
+		bio_read(0,buf);
+		memcpy(superblock,buf,sizeof(struct superblock));
+		free(buf);
+		// asked to not read the bit map
+		// bio_read(superblock->i_bitmap_blk,inode_bitmap);
+		// bio_read(superblock->d_bitmap_blk,data_block_bitmap);
+	}
 
 	return NULL;
 }
