@@ -31,8 +31,8 @@ size_t DATA_BLOCK_BITMAP_BYTES = MAX_DNUM / 8;
 
 // Declare your in-memory data structures here
 struct superblock* superblock;
-bitmap_t* inode_bitmap;
-bitmap_t* data_block_bitmap;
+bitmap_t inode_bitmap;
+bitmap_t data_block_bitmap;
 
 /* 
  * Get available inode number from bitmap
@@ -119,7 +119,8 @@ int get_avail_blkno() {
 int readi(uint16_t ino, struct inode *inode) {
 
 	// Step 1: Get the inode's on-disk block number
-	int blk = (ino * sizeof(struct inode))/BLOCK_SIZE;
+	// formula that gives the index of the block then we add where we start inodes.
+	int blk = ((ino * sizeof(struct inode))/BLOCK_SIZE) + superblock->i_start_blk;
 
 	// Step 2: Get offset of the inode in the inode on-disk block
 	int offset = ino % (BLOCK_SIZE/sizeof(struct inode));
@@ -139,7 +140,8 @@ int readi(uint16_t ino, struct inode *inode) {
 int writei(uint16_t ino, struct inode *inode) {
 
 	// Step 1: Get the block number where this inode resides on disk
-	int blk = (ino * sizeof(struct inode))/BLOCK_SIZE;
+	// formula that gives the index of the block then we add where we start inodes.
+	int blk = ((ino * sizeof(struct inode))/BLOCK_SIZE) + superblock->i_start_blk;
 	
 	// Step 2: Get the offset in the block where this inode resides on disk
 	int offset = ino % (BLOCK_SIZE/sizeof(struct inode));
@@ -191,7 +193,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 }
 
 int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
-
+	// Not needed due to time
 	// Step 1: Read dir_inode's data block and checks each directory entry of dir_inode
 	
 	// Step 2: Check if fname exist
@@ -228,14 +230,17 @@ int rufs_mkfs() {
 	superblock->max_inum = MAX_INUM;
 	superblock->max_dnum = MAX_DNUM;
 	superblock->i_bitmap_blk = 1; // 1 index
-	superblock->d_bitmap_blk = (superblock->i_bitmap_blk) + 1;
-	superblock->i_start_blk = (superblock->d_bitmap_blk) + 1;
-	superblock->d_start_blk = (superblock->i_start_blk) + NUM_INODE_BLKS;
+	superblock->d_bitmap_blk = (superblock->i_bitmap_blk) + 1; //1 block for bitmap
+	superblock->i_start_blk = (superblock->d_bitmap_blk) + 1; //1 block for bitmap
+	superblock->d_start_blk = (superblock->i_start_blk) + NUM_INODE_BLKS + 1; // 64 blocks for INODES
 
-	bio_write(0,(void*) superblock);
+	struct superblock* buf = (struct superblock*) malloc(BLOCK_SIZE);
+	memcpy(buf,superblock,sizeof(struct superblock));
+	bio_write(0,buf);
+	free(buf);
 
 	// initialize inode bitmap
-	inode_bitmap = (bitmap_t *) malloc(INODE_BITMAP_BYTES);
+	inode_bitmap = (bitmap_t) malloc(INODE_BITMAP_BYTES);
 	memset(inode_bitmap, 0, INODE_BITMAP_BYTES);
 	
 	// initialize data block bitmap
@@ -243,8 +248,8 @@ int rufs_mkfs() {
 	memset(data_block_bitmap, 0, DATA_BLOCK_BITMAP_BYTES);
 	
 	//Temp Inode that get written into disk
-	struct inode* temp_inode = malloc(sizeof(struct inode*));
-	memset(temp_inode,0,sizeof(struct inode*));
+	struct inode* temp_inode = malloc(sizeof(struct inode));
+	memset(temp_inode,0,sizeof(struct inode));
 	temp_inode->valid = INVALID;
 
 	for(int i = 0; i < 16; ++i){
@@ -252,20 +257,29 @@ int rufs_mkfs() {
 	}
 
 	//Changes the Inode number to i and writes to disk
+	// keeping it this way but if we are looking to be efficient we would block them together and then write to disk
+	// so we would make 64 writes instead of 1024
 	for(int i = 1; i < MAX_INUM; ++i){
 		temp_inode->ino = i;
 		writei(i,temp_inode);
 	}
 	free(temp_inode);
 
-	set_bitmap(inode_bitmap,0);
+	//datablocks occupied by metadata 0...66 0,1,2 for superblock and bitmap rest 3...66 for inodes
+	for(int i = 0; i < superblock->d_start_blk; ++i){
+		set_bitmap(data_block_bitmap,i);
+	}
+
+	set_bitmap(inode_bitmap,0); // no 0 for validation reasons
 
 	// update bitmap information for root directory
-	bio_write(superblock->i_bitmap_blk, (void*) inode_bitmap);
-	bio_write(superblock->d_bitmap_blk, (void*) data_block_bitmap);
+	bio_write(superblock->i_bitmap_blk, (void*) inode_bitmap); //buff of blocksize
+	bio_write(superblock->d_bitmap_blk, (void*) data_block_bitmap); //buff blocksize
 
 	// update inode for root directory
-	// TODO: create and update inode for root directory "/"
+	// TODO
+	// create inode for root directory "/" with inode number 1 which contains directory entries
+	// TODO look into stats.
 
 	return 0;
 }
@@ -286,7 +300,7 @@ static void *rufs_init(struct fuse_conn_info *conn) {
 		superblock = malloc(sizeof(struct superblock));
 		memset(superblock,0,sizeof(struct superblock));
 
-		inode_bitmap = (bitmap_t *) malloc(INODE_BITMAP_BYTES);
+		inode_bitmap = (bitmap_t) malloc(INODE_BITMAP_BYTES);
 		memset(inode_bitmap, 0, INODE_BITMAP_BYTES);
 
 		data_block_bitmap = (bitmap_t) malloc(DATA_BLOCK_BITMAP_BYTES);
