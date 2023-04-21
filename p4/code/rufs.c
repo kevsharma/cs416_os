@@ -28,6 +28,7 @@ char diskfile_path[PATH_MAX];
 size_t NUM_INODE_BLKS = (MAX_INUM)/(BLOCK_SIZE/sizeof(struct inode));
 size_t INODE_BITMAP_BYTES = MAX_INUM / 8;
 size_t DATA_BLOCK_BITMAP_BYTES = MAX_DNUM / 8;
+size_t DIRENTS_IN_BLOCK = BLOCK_SIZE/sizeof(struct dirent);
 
 // Declare your in-memory data structures here
 struct superblock* superblock;
@@ -166,30 +167,144 @@ int writei(uint16_t ino, struct inode *inode) {
 int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *dirent) {
 
   // Step 1: Call readi() to get the inode using ino (inode number of current directory)
+  struct inode dir_inode;
+  readi(ino,&dir_inode);
+
+  // if the inode cant be found or inode is invalid return not found
+  if(!dir_inode.valid){
+	return 0;
+  }
+
+  struct dirent* buf = (struct dirent*) malloc(BLOCK_SIZE);
 
   // Step 2: Get data block of current directory from inode
+  // 16 direct ptrs
+  // using 16 hard coded because it hard coded for inode and too lazy
+  for(int i = 0; i < 16; ++i){
+	if(dir_inode.direct_ptr[i] != INVALID){
+		bio_read(dir_inode.direct_ptr[i],buf);
 
-  // Step 3: Read directory's data block and check each directory entry.
-  //If the name matches, then copy directory entry to dirent structure
+		for(int j = 0; j < DIRENTS_IN_BLOCK; ++j){
+			struct dirent curr = buf[j];
+			if(curr.valid){
+				// Step 3: Read directory's data block and check each directory entry.
+  				//If the name matches, then copy directory entry to dirent structure
+				if(strncmp(fname,curr.name,name_len) == 0){
+					memcpy(dirent,&curr,sizeof(struct dirent));
+					free(buf);
+					return 1;
+				}
+			}
+		}
+	}
+  }
 
+	free(buf);
 	return 0;
 }
 
+// ret values -1 no more space, 0 file already exists, 1 added successfully
+// TODO verify logic
 int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t name_len) {
 
 	// Step 1: Read dir_inode's data block and check each directory entry of dir_inode
-	
 	// Step 2: Check if fname (directory name) is already used in other entries
-
 	// Step 3: Add directory entry in dir_inode's data block and write to disk
-
 	// Allocate a new data block for this directory if it does not exist
-
 	// Update directory inode
-
 	// Write directory entry
 
-	return 0;
+	//if the inode is not valid we cant add
+	if(!dir_inode.valid){
+		return 0;
+	}
+
+	// Search if there exist an fname that is similar if there is we cant add
+	struct dirent* buf = (struct dirent*) malloc(BLOCK_SIZE);
+	for(int i = 0; i < 16; ++i){
+		bio_read(dir_inode.direct_ptr[i],buf);
+		
+		for(int j = 0; j < DIRENTS_IN_BLOCK; ++j){
+			struct dirent curr = buf[j];
+			if(curr.valid){
+				if(strncmp(fname,curr.name,name_len) == 0){
+					free(buf);
+					return 0; // found another entry with same name
+				}
+			}
+		}
+	}
+
+	// find an empty dirent
+	int new_dirent_index = -1;
+	int ptr_index = -1;
+	int new_dirent_blk = 0; // boolean if we need to get new block that is full of dirents
+	int found_spot = 0;
+	
+	for(int dir_ptr_index = 0; dir_ptr_index < 16; ++dir_ptr_index){
+		// check if a direct pointer is not allocated 
+		// if not we make a block of dirents
+		int ptr_blk = dir_inode.direct_ptr[dir_ptr_index];
+		if(ptr_blk == INVALID){
+			new_dirent_blk = 1;
+			ptr_index = dir_ptr_index;
+			found_spot = 1;
+			break;
+		}
+		// if the block is allocated check if the block of dirents has space
+		bio_read(ptr_blk,buf);
+		for(int dirent_index = 0; dirent_index < DIRENTS_IN_BLOCK; ++dirent_index){
+			struct dirent curr = buf[dirent_index];
+			if(!curr.valid){
+				new_dirent_index = dirent_index;
+				ptr_index = dir_ptr_index;
+				found_spot = 1;
+				break;
+			}
+		}
+	}
+
+	if(!found_spot){
+		free(buf);
+		return -1; //no space for new dir entry
+	}
+	
+	// if we need to make a new block get a new block and format it for dirents
+	if(new_dirent_blk){
+		assert(ptr_index < 0); // should never be less than zero
+		int new_blk = get_avail_blkno();
+		struct dirent* buf_dirent_blk = (struct dirent*) malloc(BLOCK_SIZE);
+		memset(buf_dirent_blk,0,BLOCK_SIZE);
+		
+		// creates a new block of dirents and sets them to invalid
+		for(int i = 0; i < DIRENTS_IN_BLOCK; ++i){
+			buf_dirent_blk[i].valid = INVALID;
+		}
+
+		buf_dirent_blk[0].ino = f_ino;
+		buf_dirent_blk[0].len = name_len;
+		strcpy(buf_dirent_blk[0].name,fname);
+		buf_dirent_blk[0].valid = VALID;
+		bio_write(new_blk,buf_dirent_blk);
+		dir_inode.direct_ptr[ptr_index] = new_blk;
+
+		writei(dir_inode.ino,&dir_inode);
+		free(buf_dirent_blk);
+	}
+	else{
+		int blk_num = dir_inode.direct_ptr[ptr_index];
+		bio_read(blk_num,buf);
+		struct dirent new_dirent = buf[new_dirent_index];
+		new_dirent.ino = f_ino;
+		new_dirent.len = name_len;
+		strcpy(new_dirent.name,fname);
+		new_dirent.valid = VALID;
+
+		bio_write(blk_num,buf);
+	}
+	free(buf);
+
+	return 1; // added entry to dir
 }
 
 int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
