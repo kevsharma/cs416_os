@@ -18,6 +18,7 @@
 #include <sys/time.h>
 #include <libgen.h>
 #include <limits.h>
+#include <sys/types.h>
 
 #include "block.h"
 #include "rufs.h"
@@ -29,11 +30,13 @@ size_t NUM_INODE_BLKS = (MAX_INUM)/(BLOCK_SIZE/sizeof(struct inode));
 size_t INODE_BITMAP_BYTES = MAX_INUM / 8;
 size_t DATA_BLOCK_BITMAP_BYTES = MAX_DNUM / 8;
 size_t DIRENTS_IN_BLOCK = BLOCK_SIZE/sizeof(struct dirent);
+int ROOT_DIR_INO;
 
 // Declare your in-memory data structures here
 struct superblock* superblock;
 bitmap_t inode_bitmap;
 bitmap_t data_block_bitmap;
+
 
 /* 
  * Get available inode number from bitmap
@@ -222,14 +225,16 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 	// Search if there exist an fname that is similar if there is we cant add
 	struct dirent* buf = (struct dirent*) malloc(BLOCK_SIZE);
 	for(int i = 0; i < 16; ++i){
-		bio_read(dir_inode.direct_ptr[i],buf);
+		if(dir_inode.direct_ptr[i] == VALID){
+			bio_read(dir_inode.direct_ptr[i],buf);
 		
-		for(int j = 0; j < DIRENTS_IN_BLOCK; ++j){
-			struct dirent curr = buf[j];
-			if(curr.valid){
-				if(strncmp(fname,curr.name,name_len) == 0){
-					free(buf);
-					return 0; // found another entry with same name
+			for(int j = 0; j < DIRENTS_IN_BLOCK; ++j){
+				struct dirent curr = buf[j];
+				if(curr.valid){
+					if(strncmp(fname,curr.name,name_len) == 0){
+						free(buf);
+						return 0; // found another entry with same name
+					}
 				}
 			}
 		}
@@ -271,7 +276,6 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 	
 	// if we need to make a new block get a new block and format it for dirents
 	if(new_dirent_blk){
-		assert(ptr_index < 0); // should never be less than zero
 		int new_blk = get_avail_blkno();
 		struct dirent* buf_dirent_blk = (struct dirent*) malloc(BLOCK_SIZE);
 		memset(buf_dirent_blk,0,BLOCK_SIZE);
@@ -380,21 +384,44 @@ int rufs_mkfs() {
 	}
 	free(temp_inode);
 
-	//datablocks occupied by metadata 0...66 0,1,2 for superblock and bitmap rest 3...66 for inodes
+	//datablocks occupied by metadata 0...67 0,1,2 for superblock and bitmap rest 3...67 for inodes
 	for(int i = 0; i < superblock->d_start_blk; ++i){
 		set_bitmap(data_block_bitmap,i);
 	}
 
-	set_bitmap(inode_bitmap,0); // no 0 for validation reasons
-
 	// update bitmap information for root directory
-	bio_write(superblock->i_bitmap_blk, (void*) inode_bitmap); //buff of blocksize
-	bio_write(superblock->d_bitmap_blk, (void*) data_block_bitmap); //buff blocksize
+	struct bitmap_t* bitmap_buf = (struct bitmap_t*) malloc(BLOCK_SIZE);
+	memset(bitmap_buf,0,BLOCK_SIZE);
+	memcpy(bitmap_buf,inode_bitmap,INODE_BITMAP_BYTES);
+	bio_write(superblock->i_bitmap_blk, (void*) bitmap_buf);
+	memset(bitmap_buf,0,BLOCK_SIZE);
+	memcpy(bitmap_buf,data_block_bitmap,DATA_BLOCK_BITMAP_BYTES);
+	bio_write(superblock->d_bitmap_blk, (void*) bitmap_buf);
+	free(bitmap_buf);
 
 	// update inode for root directory
-	// TODO
-	// create inode for root directory "/" with inode number 1 which contains directory entries
-	// TODO look into stats.
+	// create inode for root directory "/" with inode number 0 which contains directory entries
+	// Other FS keep other inodes for other reasons but we can use 0th ino for "/" for rufs
+	struct inode root_dir;
+	int root_dir_ino = get_avail_ino();
+	readi(root_dir_ino,&root_dir);
+	
+	root_dir.ino = root_dir_ino;
+	root_dir.valid = VALID;
+	root_dir.type = DIRECTORY;
+	root_dir.link = 2;
+	for(int i = 0; i < 16; ++i){
+		root_dir.direct_ptr[i] = INVALID;
+	}
+	//No indirect ptrs for this proj
+	root_dir.vstat.st_mode = S_IFDIR | 0755;
+	time(&root_dir.vstat.st_atime);
+	time(&root_dir.vstat.st_mtime);
+
+	writei(root_dir_ino,&root_dir);
+	ROOT_DIR_INO = root_dir_ino;
+
+	dir_add(root_dir,ROOT_DIR_INO,".",strlen("."));
 
 	return 0;
 }
@@ -409,6 +436,7 @@ static void *rufs_init(struct fuse_conn_info *conn) {
 	// Step 1b: If disk file is found, just initialize in-memory data structures
   	// and read superblock from disk
 	if(dev_open(diskfile_path) < 0){
+		printf("making file system\n");
 		rufs_mkfs();
 	}
 	else{

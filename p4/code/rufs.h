@@ -20,6 +20,9 @@
 #define VALID 1
 #define INVALID 0
 
+#define DIRECTORY 1
+#define FILE 2
+
 
 struct superblock {
 	uint32_t	magic_num;			/* magic number */
