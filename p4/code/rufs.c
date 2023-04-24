@@ -381,7 +381,7 @@ int rufs_mkfs() {
 	superblock->i_bitmap_blk = 1; // 1 index
 	superblock->d_bitmap_blk = (superblock->i_bitmap_blk) + 1; //1 block for bitmap
 	superblock->i_start_blk = (superblock->d_bitmap_blk) + 1; //1 block for bitmap
-	superblock->d_start_blk = (superblock->i_start_blk) + NUM_INODE_BLKS + 1; // 64 blocks for INODES
+	superblock->d_start_blk = (superblock->i_start_blk) + NUM_INODE_BLKS; // 64 blocks for INODES
 
 	struct superblock* buf = (struct superblock*) malloc(BLOCK_SIZE);
 	memcpy(buf,superblock,sizeof(struct superblock));
@@ -454,7 +454,7 @@ int rufs_mkfs() {
 	//default 2 links
 	dir_add(root_dir,ROOT_DIR_INO,".",strlen(".")); // current dir
 	readi(ROOT_DIR_INO,&root_dir);
-	dir_add(root_dir,1,"..",strlen("..")); //parent dir root doesnt have parent so points to it self
+	dir_add(root_dir,ROOT_DIR_INO,"..",strlen("..")); //parent dir root doesnt have parent so points to it self
 
 	return 0;
 }
