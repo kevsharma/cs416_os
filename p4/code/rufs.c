@@ -170,6 +170,7 @@ int writei(uint16_t ino, struct inode *inode) {
 int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *dirent) {
 
   // Step 1: Call readi() to get the inode using ino (inode number of current directory)
+  //printf("finding fname: %s\n", fname);
   struct inode dir_inode;
   readi(ino,&dir_inode);
 
@@ -190,9 +191,11 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 		for(int j = 0; j < DIRENTS_IN_BLOCK; ++j){
 			struct dirent curr = buf[j];
 			if(curr.valid){
+				//printf("j: %d\n", j);
 				// Step 3: Read directory's data block and check each directory entry.
   				//If the name matches, then copy directory entry to dirent structure
-				if(strncmp(fname,curr.name,name_len) == 0){
+				if(strcmp(fname,curr.name) == 0){
+					//printf("same name j: %d\n", j);
 					memcpy(dirent,&curr,sizeof(struct dirent));
 					free(buf);
 					return 1;
@@ -260,6 +263,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 		bio_read(ptr_blk,buf);
 		for(int dirent_index = 0; dirent_index < DIRENTS_IN_BLOCK; ++dirent_index){
 			struct dirent curr = buf[dirent_index];
+			//printf("curr index: %d -> isvalid: %d\n",dirent_index, curr.valid);
 			if(!curr.valid){
 				new_dirent_index = dirent_index;
 				ptr_index = dir_ptr_index;
@@ -267,12 +271,17 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 				break;
 			}
 		}
+		if(found_spot){
+			break; // breaks out of out for loop if we found a spot
+		}
 	}
 
 	if(!found_spot){
 		free(buf);
 		return -1; //no space for new dir entry
 	}
+
+	//printf("adding %s, new_dirent_blk %d, ptr_index: %d, new_dirent_index: %d\n",fname,new_dirent_blk,ptr_index,new_dirent_index);
 	
 	// if we need to make a new block get a new block and format it for dirents
 	if(new_dirent_blk){
@@ -298,11 +307,10 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 	else{
 		int blk_num = dir_inode.direct_ptr[ptr_index];
 		bio_read(blk_num,buf);
-		struct dirent new_dirent = buf[new_dirent_index];
-		new_dirent.ino = f_ino;
-		new_dirent.len = name_len;
-		strcpy(new_dirent.name,fname);
-		new_dirent.valid = VALID;
+		buf[new_dirent_index].ino = f_ino;
+		buf[new_dirent_index].len = name_len;
+		strcpy(buf[new_dirent_index].name,fname);
+		buf[new_dirent_index].valid = VALID;
 
 		bio_write(blk_num,buf);
 	}
@@ -330,7 +338,29 @@ int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
 	// Step 1: Resolve the path name, walk through path, and finally, find its inode.
 	// Note: You could either implement it in a iterative way or recursive way
 
-	return 0;
+	char delim[2] = "/";
+	char* str = strtok((char*)path,delim);
+
+	struct dirent* nodei = (struct dirent*) malloc(sizeof(struct dirent));
+	nodei->ino = ino; 
+
+	if(strcmp(path,"/") == 0){
+		readi(ROOT_DIR_INO,inode);
+		return 1;
+	}
+
+	// go through tokens to find right dir entry
+	while(str != NULL){
+		if(dir_find(nodei->ino,str,strlen(str),nodei) == 0){
+			return 0; // cant find it wrong path/doesnt exist
+		}
+		str = strtok(NULL,delim);
+	}
+
+	// get dir entry inode and read it
+	readi(nodei->ino,inode);
+
+	return 1;
 }
 
 /* 
@@ -421,7 +451,10 @@ int rufs_mkfs() {
 	writei(root_dir_ino,&root_dir);
 	ROOT_DIR_INO = root_dir_ino;
 
-	dir_add(root_dir,ROOT_DIR_INO,".",strlen("."));
+	//default 2 links
+	dir_add(root_dir,ROOT_DIR_INO,".",strlen(".")); // current dir
+	readi(ROOT_DIR_INO,&root_dir);
+	dir_add(root_dir,1,"..",strlen("..")); //parent dir root doesnt have parent so points to it self
 
 	return 0;
 }
@@ -436,7 +469,7 @@ static void *rufs_init(struct fuse_conn_info *conn) {
 	// Step 1b: If disk file is found, just initialize in-memory data structures
   	// and read superblock from disk
 	if(dev_open(diskfile_path) < 0){
-		printf("making file system\n");
+		//printf("making file system\n");
 		rufs_mkfs();
 	}
 	else{
@@ -453,6 +486,7 @@ static void *rufs_init(struct fuse_conn_info *conn) {
 		bio_read(0,buf);
 		memcpy(superblock,buf,sizeof(struct superblock));
 		free(buf);
+		ROOT_DIR_INO = 0;
 		// asked to not read the bit map
 		// bio_read(superblock->i_bitmap_blk,inode_bitmap);
 		// bio_read(superblock->d_bitmap_blk,data_block_bitmap);
