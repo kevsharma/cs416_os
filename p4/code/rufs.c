@@ -640,6 +640,10 @@ static int rufs_mkdir(const char *path, mode_t mode) {
 
 	writei(nodei->ino,nodei);
 
+	free(nodei);
+	free(dirname_path);
+	free(basename_path);
+
 	return 0;
 }
 
@@ -680,6 +684,48 @@ static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
 	// Step 6: Call writei() to write inode to disk
 
+	char * dirname_path = (char *)malloc(strlen(path) + 1) ;
+	strcpy(dirname_path, path) ;
+	dirname(dirname_path) ;
+
+	char * basename_path = (char *)malloc(strlen(path) + 1) ;
+	strcpy(basename_path, path) ;
+	basename_path = basename(basename_path) ;
+
+	struct inode* nodei = (struct inode*) malloc(sizeof(struct inode));
+
+	if(get_node_by_path(dirname_path,ROOT_DIR_INO,nodei)){
+		return -ENOENT;
+	}
+
+	int new_ino = get_avail_ino();
+
+	int ret_dir_add = dir_add(*nodei,new_ino, basename_path,strlen(basename_path) + 1);
+
+	if(ret_dir_add == -1){
+		return -EFBIG; // File too large there are not anymore direct ptr
+	}
+	if(ret_dir_add == 0){
+		return -EEXIST;
+	}
+	
+	struct inode* new_dirent = (struct inode*) malloc(sizeof(struct inode));
+	
+	readi(new_ino,new_dirent);
+
+	new_dirent->valid = VALID;
+	new_dirent->ino = new_ino;
+	new_dirent->type = FILE;
+	new_dirent->vstat.st_mode = S_IFREG | 0666;
+	for(int i = 0; i < 16; ++i){
+		new_dirent->direct_ptr[i] = INVALID;
+	}
+
+	writei(new_ino,new_dirent);
+
+	free(nodei);
+	free(dirname_path);
+	free(basename_path);
 	return 0;
 }
 
@@ -689,7 +735,15 @@ static int rufs_open(const char *path, struct fuse_file_info *fi) {
 
 	// Step 2: If not find, return -1
 
-	return 0;
+	struct inode* nodei = (struct inode*) malloc(sizeof(struct inode));
+	
+	if(get_node_by_path(path,ROOT_DIR_INO,nodei)){
+		free(nodei);
+		return -1;
+	}
+
+	free(nodei);
+	return 0; //success
 }
 
 static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
