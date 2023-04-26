@@ -286,7 +286,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 		return -1; //no space for new dir entry
 	}
 
-	//printf("adding %s, new_dirent_blk %d, ptr_index: %d, new_dirent_index: %d\n",fname,new_dirent_blk,ptr_index,new_dirent_index);
+	printf("adding %s, new_dirent_blk %d, ptr_index: %d, new_dirent_index: %d\n",fname,new_dirent_blk,ptr_index,new_dirent_index);
 	
 	// if we need to make a new block get a new block and format it for dirents
 	if(new_dirent_blk){
@@ -628,9 +628,19 @@ static int rufs_mkdir(const char *path, mode_t mode) {
 	
 	readi(new_ino,new_dirent);
 
+	new_dirent->valid = VALID;
+	new_dirent->ino = new_ino;
+	new_dirent->type = DIRECTORY;
+	new_dirent->vstat.st_mode = S_IFDIR | 0755;
+	for(int i = 0; i < 16; ++i){
+		new_dirent->direct_ptr[i] = INVALID;
+	}
+
+	writei(new_ino,new_dirent);
+
 	// add relatives to itself and its parent
 	dir_add(*new_dirent,new_ino,".",strlen(".") + 1);
-
+	readi(new_ino,new_dirent);
 	dir_add(*new_dirent,nodei->ino,"..",strlen("..") + 1);
 
 	// adds to parents link
@@ -638,13 +648,6 @@ static int rufs_mkdir(const char *path, mode_t mode) {
 	nodei->vstat.st_nlink += 1;
 
 	writei(nodei->ino,nodei);
-
-	// update mode of new dirent
-	readi(new_ino,new_dirent);
-	//struct dirent* temp = (struct dirent*) malloc(BLOCK_SIZE);
-	printf("new dirent ptr: %d\n", new_dirent->direct_ptr[0]);
-	new_dirent->vstat.st_mode = S_IFDIR | 0755;
-	writei(new_ino,new_dirent);
 
 	return 0;
 }
