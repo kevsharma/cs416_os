@@ -171,6 +171,7 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 
   // Step 1: Call readi() to get the inode using ino (inode number of current directory)
   //printf("finding fname: %s\n", fname);
+  printf("[DIRFIND]: finding:%s in ino:%d\n",fname,ino);
   struct inode dir_inode;
   readi(ino,&dir_inode);
 
@@ -185,6 +186,7 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
   // 16 direct ptrs
   // using 16 hard coded because it hard coded for inode and too lazy
   for(int i = 0; i < 16; ++i){
+	printf("[DIR FIND]: FINDING: %s direct_ptr_index: %d blk value at index:%d\n",fname,i,dir_inode.direct_ptr[i]);
 	if(dir_inode.direct_ptr[i] != INVALID){
 		bio_read(dir_inode.direct_ptr[i],buf);
 
@@ -349,10 +351,10 @@ int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
 	struct dirent* nodei = (struct dirent*) malloc(sizeof(struct dirent));
 	nodei->ino = ino; 
 
-	if(strcmp(path,"/") == 0){
-		readi(ROOT_DIR_INO,inode);
-		return 0;
-	}
+	// if(strcmp(path,"/") == 0){
+	// 	readi(ROOT_DIR_INO,inode);
+	// 	return 0;
+	// }
 
 	// go through tokens to find right dir entry
 	while(str != NULL){
@@ -513,6 +515,8 @@ static void rufs_destroy(void *userdata) {
 
 static int rufs_getattr(const char *path, struct stat *stbuf) {
 
+	printf("[GET_ATTR]: path: %s\n", path);
+
 	// Step 1: call get_node_by_path() to get inode from path
 	// Step 2: fill attribute of file into stbuf from inode
 
@@ -581,6 +585,8 @@ static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, 
 
 static int rufs_mkdir(const char *path, mode_t mode) {
 
+	printf("[RUFS_MKDIR]: mkdir running\n");
+
 	// Step 1: Use dirname() and basename() to separate parent directory path and target directory name
 
 	// Step 2: Call get_node_by_path() to get inode of parent directory
@@ -600,12 +606,6 @@ static int rufs_mkdir(const char *path, mode_t mode) {
 	char * basename_path = (char *)malloc(strlen(path) + 1) ;
 	strcpy(basename_path, path) ;
 	basename_path = basename(basename_path) ;
-	
-	printf("mkdir path: %s\n", path);
-
-	printf("parent path: %s\n", dirname_path);
-	
-	printf("base path: %s\n", basename_path);
 
 	struct inode* nodei = (struct inode*) malloc(sizeof(struct inode));
 
@@ -644,6 +644,8 @@ static int rufs_mkdir(const char *path, mode_t mode) {
 	dir_add(*new_dirent,nodei->ino,"..",strlen("..") + 1);
 
 	// adds to parents link
+	readi(nodei->ino,nodei);
+
 	nodei->link += 1;
 	nodei->vstat.st_nlink += 1;
 
