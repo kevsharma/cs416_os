@@ -220,6 +220,11 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 	// Update directory inode
 	// Write directory entry
 
+	printf("here in dir add\n");
+
+	printf("path: %s\n",fname);
+	printf("dir_node : %d\n", dir_inode.ino);
+
 	//if the inode is not valid we cant add
 	if(!dir_inode.valid){
 		return 0;
@@ -234,7 +239,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 			for(int j = 0; j < DIRENTS_IN_BLOCK; ++j){
 				struct dirent curr = buf[j];
 				if(curr.valid){
-					if(strncmp(fname,curr.name,name_len) == 0){
+					if(strcmp(fname,curr.name) == 0){
 						free(buf);
 						return 0; // found another entry with same name
 					}
@@ -346,13 +351,13 @@ int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
 
 	if(strcmp(path,"/") == 0){
 		readi(ROOT_DIR_INO,inode);
-		return 1;
+		return 0;
 	}
 
 	// go through tokens to find right dir entry
 	while(str != NULL){
-		if(dir_find(nodei->ino,str,strlen(str),nodei) == 0){
-			return 0; // cant find it wrong path/doesnt exist
+		if(dir_find(nodei->ino,str,strlen(str)+1,nodei) == 0){
+			return 1; // cant find it wrong path/doesnt exist
 		}
 		str = strtok(NULL,delim);
 	}
@@ -360,7 +365,7 @@ int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
 	// get dir entry inode and read it
 	readi(nodei->ino,inode);
 
-	return 1;
+	return 0;
 }
 
 /* 
@@ -452,9 +457,9 @@ int rufs_mkfs() {
 	ROOT_DIR_INO = root_dir_ino;
 
 	//default 2 links
-	dir_add(root_dir,ROOT_DIR_INO,".",strlen(".")); // current dir
+	dir_add(root_dir,ROOT_DIR_INO,".",strlen(".")+1); // current dir
 	readi(ROOT_DIR_INO,&root_dir);
-	dir_add(root_dir,ROOT_DIR_INO,"..",strlen("..")); //parent dir root doesnt have parent so points to it self
+	dir_add(root_dir,ROOT_DIR_INO,"..",strlen("..")+1); //parent dir root doesnt have parent so points to it self
 
 	return 0;
 }
@@ -509,23 +514,37 @@ static void rufs_destroy(void *userdata) {
 static int rufs_getattr(const char *path, struct stat *stbuf) {
 
 	// Step 1: call get_node_by_path() to get inode from path
-
 	// Step 2: fill attribute of file into stbuf from inode
 
-		stbuf->st_mode   = S_IFDIR | 0755;
-		stbuf->st_nlink  = 2;
-		time(&stbuf->st_mtime);
+		// stbuf->st_mode   = S_IFDIR | 0755;
+		// stbuf->st_nlink  = 2;
+		// time(&stbuf->st_mtime);
+	struct inode* nodei = (struct inode*) malloc(sizeof(struct inode));
 
-	return 0;
+	if(get_node_by_path(path,ROOT_DIR_INO,nodei)){
+		return -ENOENT; //TODO check this
+	}
+
+	// copy inodes stat to stbuf
+	*stbuf = nodei->vstat;
+	free(nodei);
+	return 0; // success
 }
 
 static int rufs_opendir(const char *path, struct fuse_file_info *fi) {
 
 	// Step 1: Call get_node_by_path() to get inode from path
-
 	// Step 2: If not find, return -1
 
-    return 0;
+	struct inode* nodei = (struct inode*) malloc(sizeof(struct inode));
+	
+	if(get_node_by_path(path,ROOT_DIR_INO,nodei)){
+		free(nodei);
+		return -1;
+	}
+
+	free(nodei);
+	return 0; //success
 }
 
 static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
@@ -533,6 +552,28 @@ static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, 
 	// Step 1: Call get_node_by_path() to get inode from path
 
 	// Step 2: Read directory entries from its data blocks, and copy them to filler
+
+	struct inode* nodei = (struct inode*) malloc(sizeof(struct inode));
+
+	if(get_node_by_path(path,ROOT_DIR_INO,nodei)){
+		return -ENOENT;
+	}
+
+	for(int i = 0; i < 16; ++i){
+		if(nodei->direct_ptr[i] != INVALID){
+			struct dirent* buf = (struct dirent*) malloc(BLOCK_SIZE);
+
+			bio_read(nodei->direct_ptr[i],buf);
+
+			for(int j = 0; j < DIRENTS_IN_BLOCK; ++j){
+				if(buf[j].valid){
+					if(filler(buffer,buf[j].name,NULL,0) != 0){
+						return -ENOMEM;
+					}
+				}
+			}
+		}
+	}
 
 	return 0;
 }
@@ -551,7 +592,59 @@ static int rufs_mkdir(const char *path, mode_t mode) {
 	// Step 5: Update inode for target directory
 
 	// Step 6: Call writei() to write inode to disk
+
+	char * dirname_path = (char *)malloc(strlen(path) + 1) ;
+	strcpy(dirname_path, path) ;
+	dirname(dirname_path) ;
+
+	char * basename_path = (char *)malloc(strlen(path) + 1) ;
+	strcpy(basename_path, path) ;
+	basename_path = basename(basename_path) ;
 	
+	printf("mkdir path: %s\n", path);
+
+	printf("parent path: %s\n", dirname_path);
+	
+	printf("base path: %s\n", basename_path);
+
+	struct inode* nodei = (struct inode*) malloc(sizeof(struct inode));
+
+	if(get_node_by_path(dirname_path,ROOT_DIR_INO,nodei)){
+		return -ENOENT;
+	}
+
+	int new_ino = get_avail_ino();
+
+	int ret_dir_add = dir_add(*nodei,new_ino, basename_path,strlen(basename_path) + 1);
+
+	if(ret_dir_add == -1){
+		return -EFBIG; // File too large there are not anymore direct ptr
+	}
+	if(ret_dir_add == 0){
+		return -EEXIST;
+	}
+	
+	struct inode* new_dirent = (struct inode*) malloc(sizeof(struct inode));
+	
+	readi(new_ino,new_dirent);
+
+	// add relatives to itself and its parent
+	dir_add(*new_dirent,new_ino,".",strlen(".") + 1);
+
+	dir_add(*new_dirent,nodei->ino,"..",strlen("..") + 1);
+
+	// adds to parents link
+	nodei->link += 1;
+	nodei->vstat.st_nlink += 1;
+
+	writei(nodei->ino,nodei);
+
+	// update mode of new dirent
+	readi(new_ino,new_dirent);
+	//struct dirent* temp = (struct dirent*) malloc(BLOCK_SIZE);
+	printf("new dirent ptr: %d\n", new_dirent->direct_ptr[0]);
+	new_dirent->vstat.st_mode = S_IFDIR | 0755;
+	writei(new_ino,new_dirent);
 
 	return 0;
 }
