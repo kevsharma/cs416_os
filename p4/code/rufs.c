@@ -171,7 +171,6 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 
   // Step 1: Call readi() to get the inode using ino (inode number of current directory)
   //printf("finding fname: %s\n", fname);
-  printf("[DIRFIND]: finding:%s in ino:%d\n",fname,ino);
   struct inode dir_inode;
   readi(ino,&dir_inode);
 
@@ -186,7 +185,6 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
   // 16 direct ptrs
   // using 16 hard coded because it hard coded for inode and too lazy
   for(int i = 0; i < 16; ++i){
-	printf("[DIR FIND]: FINDING: %s direct_ptr_index: %d blk value at index:%d\n",fname,i,dir_inode.direct_ptr[i]);
 	if(dir_inode.direct_ptr[i] != INVALID){
 		bio_read(dir_inode.direct_ptr[i],buf);
 
@@ -221,11 +219,6 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 	// Allocate a new data block for this directory if it does not exist
 	// Update directory inode
 	// Write directory entry
-
-	printf("here in dir add\n");
-
-	printf("path: %s\n",fname);
-	printf("dir_node : %d\n", dir_inode.ino);
 
 	//if the inode is not valid we cant add
 	if(!dir_inode.valid){
@@ -288,7 +281,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 		return -1; //no space for new dir entry
 	}
 
-	printf("adding %s, new_dirent_blk %d, ptr_index: %d, new_dirent_index: %d\n",fname,new_dirent_blk,ptr_index,new_dirent_index);
+	//printf("adding %s, new_dirent_blk %d, ptr_index: %d, new_dirent_index: %d\n",fname,new_dirent_blk,ptr_index,new_dirent_index);
 	
 	// if we need to make a new block get a new block and format it for dirents
 	if(new_dirent_blk){
@@ -351,10 +344,10 @@ int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
 	struct dirent* nodei = (struct dirent*) malloc(sizeof(struct dirent));
 	nodei->ino = ino; 
 
-	// if(strcmp(path,"/") == 0){
-	// 	readi(ROOT_DIR_INO,inode);
-	// 	return 0;
-	// }
+	if(strcmp(path,"/") == 0){
+		readi(ROOT_DIR_INO,inode);
+		return 0;
+	}
 
 	// go through tokens to find right dir entry
 	while(str != NULL){
@@ -515,8 +508,6 @@ static void rufs_destroy(void *userdata) {
 
 static int rufs_getattr(const char *path, struct stat *stbuf) {
 
-	printf("[GET_ATTR]: path: %s\n", path);
-
 	// Step 1: call get_node_by_path() to get inode from path
 	// Step 2: fill attribute of file into stbuf from inode
 
@@ -584,8 +575,6 @@ static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, 
 
 
 static int rufs_mkdir(const char *path, mode_t mode) {
-
-	printf("[RUFS_MKDIR]: mkdir running\n");
 
 	// Step 1: Use dirname() and basename() to separate parent directory path and target directory name
 
