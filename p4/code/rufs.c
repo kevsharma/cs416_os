@@ -843,7 +843,7 @@ static int rufs_write(const char *path, const char *buffer, size_t size, off_t o
 		memset(buf,0,BLOCK_SIZE); // reset buf to 0
 
 		if(nodei->direct_ptr[blk_index] == INVALID){
-		
+				
 			// get a new block
 			int new_blk = get_avail_blkno();
 			nodei->direct_ptr[blk_index] = new_blk;
@@ -873,6 +873,7 @@ static int rufs_write(const char *path, const char *buffer, size_t size, off_t o
 				bytes_written += write_size_remaining;
 				write_size_remaining = 0;
 			}
+			bio_write(nodei->direct_ptr[blk_index],buf);
 		}
 		offset = 0;
 		++blk_index;
