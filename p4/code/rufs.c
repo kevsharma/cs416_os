@@ -842,40 +842,32 @@ static int rufs_write(const char *path, const char *buffer, size_t size, off_t o
 		
 		memset(buf,0,BLOCK_SIZE); // reset buf to 0
 
-		if(nodei->direct_ptr[blk_index] == INVALID){
-				
-			// get a new block
-			int new_blk = get_avail_blkno();
-			nodei->direct_ptr[blk_index] = new_blk;
+		int buf_offset = offset % BLOCK_SIZE;
 
-			if(write_size_remaining >= BLOCK_SIZE){
-				memcpy(buf,(buffer + bytes_written),BLOCK_SIZE);
-				write_size_remaining -= BLOCK_SIZE;
-				bytes_written += BLOCK_SIZE;
-			}
-			else{
-				memcpy(buf,(buffer + bytes_written),write_size_remaining);
-				bytes_written += write_size_remaining;
-				write_size_remaining = 0;
-			}
-			bio_write(new_blk,buf);
+		int blk_size_after_offset = BLOCK_SIZE - buf_offset;
+
+		// write what is going to fit in the block
+		// either how much we have to write or blk size after offset
+		int write_size = (write_size_remaining <= blk_size_after_offset) ? write_size_remaining : blk_size_after_offset;
+
+		//printf("[WRITE]: write size: %d, blk size after ofset: %d, buf offset: %d \n", write_size, blk_size_after_offset, buf_offset);
+
+		if(nodei->direct_ptr[blk_index] == INVALID){
+			//printf("[WRITE]: Getting a new BLOCK\n");
+			int new_blkno = get_avail_blkno();
+			nodei->direct_ptr[blk_index] = new_blkno;
 		}
-		else{
-			bio_read(nodei->direct_ptr[blk_index],buf);
-			int buf_offset = offset % BLOCK_SIZE;
-			if(write_size_remaining >= BLOCK_SIZE){
-				memcpy(buf + buf_offset, buffer + bytes_written, BLOCK_SIZE);
-				write_size_remaining -= BLOCK_SIZE;
-				bytes_written += BLOCK_SIZE;
-			}
-			else{
-				memcpy(buf + buf_offset, buffer + bytes_written,write_size_remaining);
-				bytes_written += write_size_remaining;
-				write_size_remaining = 0;
-			}
-			bio_write(nodei->direct_ptr[blk_index],buf);
-		}
-		offset = 0;
+
+		bio_read(nodei->direct_ptr[blk_index],buf);
+
+		//printf("[WRITE]: getting buffer at: %d\n", nodei->direct_ptr[blk_index]);
+		memcpy(buf + buf_offset, buffer + bytes_written,write_size);
+
+		//printf("[WRITE]: BUFFER after %s\n", buf);
+		bio_write(nodei->direct_ptr[blk_index],buf);
+		offset = 0; // after first write offset is 0 to start right next to previous write
+		write_size_remaining -= write_size;
+		bytes_written += write_size;
 		++blk_index;
 	}
 
