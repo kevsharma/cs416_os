@@ -43,10 +43,6 @@ bitmap_t data_block_bitmap;
  */
 int get_avail_ino() {
 
-	if (superblock == NULL){
-		// we can either error out or get superblock then if its still cant get it then exit
-	}
-
 	// Step 1: Read inode bitmap from disk
 	bitmap_t* buf = malloc(BLOCK_SIZE);
 	if(bio_read(superblock->i_bitmap_blk, buf) <= 0){
@@ -82,10 +78,6 @@ int get_avail_ino() {
  * Get available data block number from bitmap
  */
 int get_avail_blkno() {
-
-	if (superblock == NULL){
-		// we can either error out or get superblock then if its still cant get it then exit
-	}
 
 	// Step 1: Read data block bitmap from disk
 	bitmap_t* buf = malloc(BLOCK_SIZE);
@@ -534,11 +526,9 @@ static int rufs_opendir(const char *path, struct fuse_file_info *fi) {
 	struct inode* nodei = (struct inode*) malloc(sizeof(struct inode));
 	
 	if(get_node_by_path(path,ROOT_DIR_INO,nodei)){
-		free(nodei);
 		return -1;
 	}
 
-	free(nodei);
 	return 0; //success
 }
 
@@ -640,10 +630,6 @@ static int rufs_mkdir(const char *path, mode_t mode) {
 
 	writei(nodei->ino,nodei);
 
-	free(nodei);
-	free(dirname_path);
-	free(basename_path);
-
 	return 0;
 }
 
@@ -724,10 +710,6 @@ static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
 	writei(new_ino,new_dirent);
 
-	// touch segfaults if we free
-	// free(nodei);
-	// free(dirname_path);
-	// free(basename_path); 
 	return 0;
 }
 
@@ -740,15 +722,12 @@ static int rufs_open(const char *path, struct fuse_file_info *fi) {
 	struct inode* nodei = (struct inode*) malloc(sizeof(struct inode));
 	
 	if(get_node_by_path(path,ROOT_DIR_INO,nodei)){
-		free(nodei);
 		return -1;
 	}
 
-	free(nodei);
 	return 0; //success
 }
 
-//TODO CHECK THIS AFTER WRITE
 static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
 
 	// Step 1: You could call get_node_by_path() to get inode from path
@@ -765,52 +744,50 @@ static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, 
 		return -ENOENT;
 	}
 
-	int blk_index = offset/BLOCK_SIZE; // dir ptr index
-
-	int file_size_remaining = (nodei->size) - offset; // total file size available to read
-
-	int byte_requested = size; // total bytes requested/remaining requested
-
-	int bytes_written = 0;
-
-	if(nodei->direct_ptr[blk_index] == INVALID){
-		return 0; // no dir ptr 0 byte read
+	if(offset >= nodei->size){
+		return 0; // cant read more than size of file
 	}
 
-	if(blk_index > 15 || file_size_remaining < offset){ // offset > 15 direct blocks or file is less than offset
-		return 0;
-	}
+	int blk_index = offset / BLOCK_SIZE;
 
-	int start_byte = offset - (blk_index * BLOCK_SIZE); // start byte in the data block
+	int max_file_readable = nodei->size - offset;
+
+	int read_size_remaining = (max_file_readable < size) ? max_file_readable : size;
+
+	int bytes_read = 0;
 
 	char* buf = (char *) malloc(BLOCK_SIZE);
 
-	// check if there is actual data left to read
-	// check if there are more bytes requested
-	// arr out of bounds check for dir ptr
-	while(file_size_remaining > 0 && byte_requested > 0 && blk_index < 16){
-		bio_read(nodei->direct_ptr[blk_index],buf);
+	while(read_size_remaining > 0 && blk_index < 16){
 		
-		int cpy_bytes = 0;
+		memset(buf,0,BLOCK_SIZE); // reset buf to 0
 
-		// if actual data size is less than requested data size then only read file size amount else read requested amount
-		if(file_size_remaining < byte_requested){
-			cpy_bytes = (file_size_remaining < BLOCK_SIZE) ?  file_size_remaining : BLOCK_SIZE - start_byte;
+		int buf_offset = offset % BLOCK_SIZE;
+
+		int blk_size_after_offset = BLOCK_SIZE - buf_offset;
+
+		int read_size = (read_size_remaining <= blk_size_after_offset) ? read_size_remaining : blk_size_after_offset;
+
+		if(nodei->direct_ptr[blk_index] == INVALID){
+			// shouldnt get here because it should only loop through readable bytes
+			return bytes_read;
 		}
-		else{
-			cpy_bytes = (byte_requested < BLOCK_SIZE) ?  byte_requested : BLOCK_SIZE - start_byte;
-		}
 
-		memcpy(buffer + bytes_written, buf + start_byte, cpy_bytes);
+		bio_read(nodei->direct_ptr[blk_index],buf);
 
+		memcpy(buffer + bytes_read, buf + buf_offset, read_size);
+
+		offset = 0;
+		read_size_remaining -= read_size;
+		bytes_read += read_size;
 		++blk_index;
-		file_size_remaining -= cpy_bytes;
-		byte_requested -= cpy_bytes;
-		bytes_written += cpy_bytes;
 	}
 
-	printf("[READ]: Bytes written %d\n", bytes_written);
-	return bytes_written;
+	// change access time
+
+	writei(nodei->ino,nodei);
+
+	return bytes_read;
 }
 
 static int rufs_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
@@ -875,8 +852,6 @@ static int rufs_write(const char *path, const char *buffer, size_t size, off_t o
 	nodei->vstat.st_size += bytes_written;
 
 	writei(nodei->ino,nodei);
-	//free(buf);
-	//free(nodei);
 
 	return bytes_written;
 }
