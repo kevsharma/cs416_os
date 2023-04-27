@@ -716,6 +716,7 @@ static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 	new_dirent->valid = VALID;
 	new_dirent->ino = new_ino;
 	new_dirent->type = FILE;
+	new_dirent->size = 0;
 	new_dirent->vstat.st_mode = S_IFREG | 0666;
 	for(int i = 0; i < 16; ++i){
 		new_dirent->direct_ptr[i] = INVALID;
@@ -723,9 +724,10 @@ static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
 	writei(new_ino,new_dirent);
 
-	free(nodei);
-	free(dirname_path);
-	free(basename_path);
+	// touch segfaults if we free
+	// free(nodei);
+	// free(dirname_path);
+	// free(basename_path); 
 	return 0;
 }
 
@@ -746,6 +748,7 @@ static int rufs_open(const char *path, struct fuse_file_info *fi) {
 	return 0; //success
 }
 
+//TODO CHECK THIS AFTER WRITE
 static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
 
 	// Step 1: You could call get_node_by_path() to get inode from path
@@ -755,7 +758,59 @@ static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, 
 	// Step 3: copy the correct amount of data from offset to buffer
 
 	// Note: this function should return the amount of bytes you copied to buffer
-	return 0;
+
+	struct inode* nodei = (struct inode*) malloc(sizeof(struct inode));
+
+	if(get_node_by_path(path,ROOT_DIR_INO,nodei)){
+		return -ENOENT;
+	}
+
+	int blk_index = offset/BLOCK_SIZE; // dir ptr index
+
+	int file_size_remaining = (nodei->size) - offset; // total file size available to read
+
+	int byte_requested = size; // total bytes requested/remaining requested
+
+	int bytes_written = 0;
+
+	if(nodei->direct_ptr[blk_index] == INVALID){
+		return 0; // no dir ptr 0 byte read
+	}
+
+	if(blk_index > 15 || file_size_remaining < offset){ // offset > 15 direct blocks or file is less than offset
+		return 0;
+	}
+
+	int start_byte = offset - (blk_index * BLOCK_SIZE); // start byte in the data block
+
+	char* buf = (char *) malloc(BLOCK_SIZE);
+
+	// check if there is actual data left to read
+	// check if there are more bytes requested
+	// arr out of bounds check for dir ptr
+	while(file_size_remaining > 0 && byte_requested > 0 && blk_index < 16){
+		bio_read(nodei->direct_ptr[blk_index],buf);
+		
+		int cpy_bytes = 0;
+
+		// if actual data size is less than requested data size then only read file size amount else read requested amount
+		if(file_size_remaining < byte_requested){
+			cpy_bytes = (file_size_remaining < BLOCK_SIZE) ?  file_size_remaining : BLOCK_SIZE - start_byte;
+		}
+		else{
+			cpy_bytes = (byte_requested < BLOCK_SIZE) ?  byte_requested : BLOCK_SIZE - start_byte;
+		}
+
+		memcpy(buffer + bytes_written, buf + start_byte, cpy_bytes);
+
+		++blk_index;
+		file_size_remaining -= cpy_bytes;
+		byte_requested -= cpy_bytes;
+		bytes_written += cpy_bytes;
+	}
+
+	printf("[READ]: Bytes written %d\n", bytes_written);
+	return bytes_written;
 }
 
 static int rufs_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
@@ -768,7 +823,69 @@ static int rufs_write(const char *path, const char *buffer, size_t size, off_t o
 	// Step 4: Update the inode info and write it to disk
 
 	// Note: this function should return the amount of bytes you write to disk
-	return size;
+
+	struct inode* nodei = (struct inode*) malloc(sizeof(struct inode));
+
+	if(get_node_by_path(path,ROOT_DIR_INO,nodei)){
+		return -ENOENT;
+	}
+
+	int blk_index = offset / BLOCK_SIZE;
+
+	int write_size_remaining = size;
+
+	int bytes_written = 0;
+
+	char* buf = (char *) malloc(BLOCK_SIZE);
+
+	while(write_size_remaining > 0 && blk_index < 16){
+		
+		memset(buf,0,BLOCK_SIZE); // reset buf to 0
+
+		if(nodei->direct_ptr[blk_index] == INVALID){
+		
+			// get a new block
+			int new_blk = get_avail_blkno();
+			nodei->direct_ptr[blk_index] = new_blk;
+
+			if(write_size_remaining >= BLOCK_SIZE){
+				memcpy(buf,(buffer + bytes_written),BLOCK_SIZE);
+				write_size_remaining -= BLOCK_SIZE;
+				bytes_written += BLOCK_SIZE;
+			}
+			else{
+				memcpy(buf,(buffer + bytes_written),write_size_remaining);
+				bytes_written += write_size_remaining;
+				write_size_remaining = 0;
+			}
+			bio_write(new_blk,buf);
+		}
+		else{
+			bio_read(nodei->direct_ptr[blk_index],buf);
+			int buf_offset = offset % BLOCK_SIZE;
+			if(write_size_remaining >= BLOCK_SIZE){
+				memcpy(buf + buf_offset, buffer + bytes_written, BLOCK_SIZE);
+				write_size_remaining -= BLOCK_SIZE;
+				bytes_written += BLOCK_SIZE;
+			}
+			else{
+				memcpy(buf + buf_offset, buffer + bytes_written,write_size_remaining);
+				bytes_written += write_size_remaining;
+				write_size_remaining = 0;
+			}
+		}
+		offset = 0;
+		++blk_index;
+	}
+
+	nodei->size += bytes_written;
+	nodei->vstat.st_size += bytes_written;
+
+	writei(nodei->ino,nodei);
+	//free(buf);
+	//free(nodei);
+
+	return bytes_written;
 }
 
 static int rufs_unlink(const char *path) {
