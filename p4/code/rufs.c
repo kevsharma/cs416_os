@@ -514,6 +514,7 @@ static int rufs_getattr(const char *path, struct stat *stbuf) {
 
 	// copy inodes stat to stbuf
 	*stbuf = nodei->vstat;
+	stbuf->st_size = nodei->size;
 	free(nodei);
 	return 0; // success
 }
@@ -611,6 +612,10 @@ static int rufs_mkdir(const char *path, mode_t mode) {
 	new_dirent->ino = new_ino;
 	new_dirent->type = DIRECTORY;
 	new_dirent->vstat.st_mode = S_IFDIR | 0755;
+
+	time(&new_dirent->vstat.st_atime);
+	time(&new_dirent->vstat.st_mtime);
+
 	for(int i = 0; i < 16; ++i){
 		new_dirent->direct_ptr[i] = INVALID;
 	}
@@ -708,6 +713,9 @@ static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 		new_dirent->direct_ptr[i] = INVALID;
 	}
 
+	time(&new_dirent->vstat.st_atime);
+	time(&new_dirent->vstat.st_mtime);
+
 	writei(new_ino,new_dirent);
 
 	return 0;
@@ -722,6 +730,7 @@ static int rufs_open(const char *path, struct fuse_file_info *fi) {
 	struct inode* nodei = (struct inode*) malloc(sizeof(struct inode));
 	
 	if(get_node_by_path(path,ROOT_DIR_INO,nodei)){
+		time(&nodei->vstat.st_atime);
 		return -1;
 	}
 
@@ -783,7 +792,7 @@ static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, 
 		++blk_index;
 	}
 
-	// change access time
+	time(&nodei->vstat.st_atime);
 
 	writei(nodei->ino,nodei);
 
@@ -850,6 +859,9 @@ static int rufs_write(const char *path, const char *buffer, size_t size, off_t o
 
 	nodei->size += bytes_written;
 	nodei->vstat.st_size += bytes_written;
+
+	time(&nodei->vstat.st_atime);
+	time(&nodei->vstat.st_mtime);
 
 	writei(nodei->ino,nodei);
 
