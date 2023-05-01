@@ -3,6 +3,10 @@
  *	Tiny File System
  *	File:	rufs.c
  *
+ *	Author: Yash Patel | yp315
+ *	Author: Kev Sharma | kks107
+ * 
+ *	Tested on ls.cs.rutgers.edu
  */
 
 #define FUSE_USE_VERSION 26
@@ -815,6 +819,13 @@ static int rufs_write(const char *path, const char *buffer, size_t size, off_t o
 	if(get_node_by_path(path,ROOT_DIR_INO,nodei)){
 		return -ENOENT;
 	}
+
+	// This is for rewriting because simple test will fail if we dont delete diskfile
+	// as we are checking the size so we make size back to 0 so it can rewrite and pass test.
+	// if(offset == 0){
+	// 	nodei->size = 0;
+	// 	nodei->vstat.st_size = 0;
+	// }
 
 	int blk_index = offset / BLOCK_SIZE;
 

@@ -3,6 +3,11 @@
  *	Tiny File System
  *
  *	File:	rufs.h
+ *	
+ *	Author: Yash Patel | yp315
+ *	Author: Kev Sharma | kks107
+ * 
+ *	Tested on ls.cs.rutgers.edu
  *
  */
 
